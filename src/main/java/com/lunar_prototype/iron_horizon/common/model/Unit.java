@@ -59,7 +59,7 @@ public class Unit {
             attackRange = 34.0f;
             attackDamage = 320.0f;
             attackCooldown = 0.0f;
-            radius = 1.1f;
+            radius = 0.3f;
         } else {
             maxHp = 150;
             speed = 12.0f;
@@ -70,10 +70,31 @@ public class Unit {
         this.hp = maxHp;
     }
 
-    public void update(float deltaTime) {
+    public void update(float deltaTime, GameState state) {
+        boolean facingOverride = false;
+        Vector2f targetPos = null;
+
+        if (targetUnitId != null && state != null) {
+            Unit target = state.units.get(targetUnitId);
+            if (target != null) targetPos = target.position;
+        } else if (attackTargetBuildingId != null && state != null) {
+            Building target = state.buildings.get(attackTargetBuildingId);
+            if (target != null) targetPos = target.position;
+        } else if (targetBuildingId != null && state != null) {
+            Building target = state.buildings.get(targetBuildingId);
+            if (target != null) targetPos = target.position;
+        }
+
+        if (targetPos != null) {
+            facingDeg = (float) Math.toDegrees(Math.atan2(targetPos.y - position.y, targetPos.x - position.x));
+            facingOverride = true;
+        }
+
         if (position.distance(targetPosition) > 0.5f) {
             velocity.set(targetPosition).sub(position).normalize().mul(speed);
-            facingDeg = -(float) Math.toDegrees(Math.atan2(velocity.x, velocity.y));
+            if (!facingOverride) {
+                facingDeg = (float) Math.toDegrees(Math.atan2(velocity.y, velocity.x));
+            }
         } else {
             velocity.set(0, 0);
             manualMoveOrder = false;

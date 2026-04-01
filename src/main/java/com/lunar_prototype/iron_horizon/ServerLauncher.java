@@ -73,8 +73,20 @@ public class ServerLauncher {
                         Unit constructor = gameState.units.get(cmd.constructorUnitId);
                         if (constructor != null) {
                             Network.Task task = new Network.Task(); task.type = Network.Task.Type.BUILD; task.x = b.position.x; task.y = b.position.y; task.targetBuildingId = b.id;
-                            if (!cmd.shiftHold) { constructor.tasks.clear(); constructor.targetBuildingId = b.id; constructor.targetPosition.set(b.position); }
-                            else constructor.tasks.add(task);
+                            boolean constructorIdle = constructor.targetBuildingId == null && constructor.targetUnitId == null && constructor.attackTargetBuildingId == null;
+                            if (!cmd.shiftHold) {
+                                constructor.tasks.clear();
+                                constructor.targetBuildingId = b.id;
+                                constructor.targetPosition.set(b.position);
+                                constructor.manualMoveOrder = true;
+                            } else {
+                                constructor.tasks.add(task);
+                                if (constructorIdle && constructor.targetBuildingId == null) {
+                                    constructor.targetBuildingId = b.id;
+                                    constructor.targetPosition.set(b.position);
+                                    constructor.manualMoveOrder = true;
+                                }
+                            }
                         }
                     } else if (object instanceof Network.ProduceCommand) {
                         Network.ProduceCommand cmd = (Network.ProduceCommand) object;
@@ -370,17 +382,24 @@ public class ServerLauncher {
                     }
                 }
             }
-            if (u.targetBuildingId != null) { Building b = gameState.buildings.get(u.targetBuildingId); if (b == null || b.isComplete) u.targetBuildingId = null; }
+            if (u.targetBuildingId != null) {
+                Integer completedBuildId = null;
+                Building b = gameState.buildings.get(u.targetBuildingId);
+                if (b == null || b.isComplete) {
+                    completedBuildId = u.targetBuildingId;
+                    u.targetBuildingId = null;
+                }
+                if (completedBuildId != null && !u.tasks.isEmpty()) {
+                    Network.Task head = u.tasks.get(0);
+                    if (head.type == Network.Task.Type.BUILD && head.targetBuildingId != null && head.targetBuildingId.equals(completedBuildId)) {
+                        u.tasks.remove(0);
+                    }
+                    startNextQueuedTask(u);
+                }
+            }
             if (u.targetBuildingId == null && u.targetUnitId == null && u.attackTargetBuildingId == null && !u.tasks.isEmpty()) {
                 if (u.position.distance(u.targetPosition) <= 0.5f) {
-                    Network.Task next = u.tasks.remove(0);
-                    if (next.type == Network.Task.Type.MOVE) {
-                        u.targetPosition.set(next.x, next.y);
-                        u.manualMoveOrder = true;
-                    } else if (next.type == Network.Task.Type.BUILD) {
-                        u.targetBuildingId = next.targetBuildingId;
-                        u.targetPosition.set(next.x, next.y);
-                    }
+                    startNextQueuedTask(u);
                 }
             }
         }
@@ -436,6 +455,21 @@ public class ServerLauncher {
             if (dist <= splashRadius) {
                 building.hp -= splashDamage * 0.6f;
             }
+        }
+    }
+
+    private void startNextQueuedTask(Unit u) {
+        if (u.tasks.isEmpty()) {
+            return;
+        }
+        Network.Task next = u.tasks.remove(0);
+        if (next.type == Network.Task.Type.MOVE) {
+            u.targetPosition.set(next.x, next.y);
+            u.manualMoveOrder = true;
+        } else if (next.type == Network.Task.Type.BUILD) {
+            u.targetBuildingId = next.targetBuildingId;
+            u.targetPosition.set(next.x, next.y);
+            u.manualMoveOrder = true;
         }
     }
 

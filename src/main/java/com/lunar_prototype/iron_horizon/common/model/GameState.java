@@ -32,7 +32,7 @@ public class GameState {
 
     public void update(float deltaTime) {
         for (Unit unit : units.values()) {
-            unit.update(deltaTime);
+            unit.update(deltaTime, this);
         }
     }
 }

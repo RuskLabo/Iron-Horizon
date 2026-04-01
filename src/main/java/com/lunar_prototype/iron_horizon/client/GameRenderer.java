@@ -82,8 +82,8 @@ public class GameRenderer {
     private final Map<Integer, Texture> houndTextures = new HashMap<>();
     private final Map<Integer, Texture> obeliskTextures = new HashMap<>();
     private final Map<Integer, Float> unitFacingAngles = new HashMap<>();
-    private static final float HOUND_MODEL_YAW_OFFSET = 0.0f;
-    private static final float OBELISK_MODEL_YAW_OFFSET = 0.0f;
+    private static final float HOUND_MODEL_YAW_OFFSET = 90.0f;
+    private static final float OBELISK_MODEL_YAW_OFFSET = 90.0f;
 
     private Vector3f cameraPos = new Vector3f(50, 60, 100);
     private float pitch = 60;
