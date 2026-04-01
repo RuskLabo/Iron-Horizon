@@ -87,13 +87,33 @@ public class ServerLauncher {
                         for (Integer id : cmd.unitIds) {
                             Unit unit = gameState.units.get(id);
                             if (unit != null && unit.teamId == teamId) {
-                            unit.targetPosition.set(cmd.targetX, cmd.targetY);
-                                unit.targetBuildingId = null; unit.tasks.clear(); unit.targetUnitId = null; unit.attackTargetBuildingId = null;
-                                unit.manualMoveOrder = true;
+                                if (!cmd.queue) {
+                                    unit.tasks.clear();
+                                    unit.targetUnitId = null;
+                                    unit.attackTargetBuildingId = null;
+                                    unit.targetBuildingId = null;
+                                }
+                                if (cmd.waypoints != null && !cmd.waypoints.isEmpty()) {
+                                    Vector2f first = cmd.waypoints.get(0);
+                                    unit.targetPosition.set(first.x, first.y);
+                                    unit.manualMoveOrder = true;
+                                    for (int i = 1; i < cmd.waypoints.size(); i++) {
+                                        Vector2f wp = cmd.waypoints.get(i);
+                                        Network.Task task = new Network.Task();
+                                        task.type = Network.Task.Type.MOVE;
+                                        task.x = wp.x;
+                                        task.y = wp.y;
+                                        unit.tasks.add(task);
+                                    }
+                                } else {
+                                    unit.targetPosition.set(cmd.targetX, cmd.targetY);
+                                    unit.manualMoveOrder = true;
+                                }
                                 if (cmd.targetBuildingId != null) {
                                     Building tb = gameState.buildings.get(cmd.targetBuildingId);
                                     if (tb != null && !tb.isComplete && unit.type == Unit.Type.CONSTRUCTOR) {
-                                        unit.targetBuildingId = tb.id; unit.targetPosition.set(tb.position);
+                                        unit.targetBuildingId = tb.id;
+                                        unit.targetPosition.set(tb.position);
                                     }
                                 }
                             }
@@ -224,12 +244,18 @@ public class ServerLauncher {
                         case FACTORY -> 500;
                         case EXTRACTOR -> 300;
                         case LASER_TOWER -> 400;
+                        case WALL -> 60;
                         default -> 100;
                     };
                     int helpers = (int) gameState.units.values().stream().filter(u -> u.teamId == tid && u.targetBuildingId != null && u.targetBuildingId == b.id && u.position.distance(b.position) < 15.0f).count();
                     if (helpers > 0) drain += (cost * 0.3f) * helpers; // Build speed 0.3
                 } else if (b.type == Building.Type.FACTORY && !b.productionQueue.isEmpty()) {
-                    float cost = (b.productionQueue.get(0) == Unit.Type.TANK) ? 200 : 150;
+                    float cost = switch (b.productionQueue.get(0)) {
+                        case TANK -> 200;
+                        case HOUND -> 120;
+                        case OBELISK -> 400;
+                        default -> 150;
+                    };
                     drain += cost / 6.0f; // Production balanced
                 }
             }
@@ -252,8 +278,9 @@ public class ServerLauncher {
                         if (b.buildProgress >= 1.0f) { b.buildProgress = 1.0f; b.isComplete = true; b.hp = b.maxHp; }
                     }
                 } else if (b.type == Building.Type.FACTORY && !b.productionQueue.isEmpty()) {
+                    float productionDuration = getProductionDuration(b.productionQueue.get(0));
                     b.productionTimer += dt * efficiency;
-                    if (b.productionTimer >= 5.0f) {
+                    if (b.productionTimer >= productionDuration) {
                         Vector2f sp = new Vector2f(b.position.x + 5, b.position.y + 5);
                         for (Unit u : gameState.units.values()) if (u.position.distance(sp) < 2.0f) u.targetPosition.set(sp.x + 5, sp.y + 2);
                         Unit unit = new Unit(idCounter++, sp.x, sp.y);
@@ -297,7 +324,7 @@ public class ServerLauncher {
                 continue;
             }
             if (u.attackCooldown > 0) u.attackCooldown -= dt;
-            if (u.type == Unit.Type.TANK && u.targetUnitId == null && u.attackTargetBuildingId == null) {
+            if ((u.type == Unit.Type.TANK || u.type == Unit.Type.OBELISK) && u.targetUnitId == null && u.attackTargetBuildingId == null) {
                 for (Unit enemy : gameState.units.values()) { if (enemy.teamId != u.teamId && enemy.position.distance(u.position) < u.attackRange) { u.targetUnitId = enemy.id; break; } }
             }
             if (u.targetUnitId != null) {
@@ -310,7 +337,16 @@ public class ServerLauncher {
                         else u.targetPosition.set(t.position);
                     } else {
                         if (!u.manualMoveOrder) u.targetPosition.set(u.position);
-                        if (u.attackCooldown <= 0) { spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId); u.attackCooldown = 1.0f; }
+                        if (u.attackCooldown <= 0) {
+                            if (u.type == Unit.Type.OBELISK) {
+                                applySplashDamage(u, t.position.x, t.position.y);
+                                addCombatEvent(Network.CombatEvent.Type.OBELISK_BLAST, u.position.x, u.position.y, t.position.x, t.position.y);
+                                u.attackCooldown = 3.6f;
+                            } else {
+                                spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId);
+                                u.attackCooldown = 1.0f;
+                            }
+                        }
                     }
                 }
             } else if (u.attackTargetBuildingId != null) {
@@ -319,12 +355,33 @@ public class ServerLauncher {
                 else {
                     float dist = u.position.distance(t.position);
                     if (dist > u.attackRange + t.size) u.targetPosition.set(t.position);
-                    else { u.targetPosition.set(u.position); if (u.attackCooldown <= 0) { spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId); u.attackCooldown = 1.0f; } }
+                    else {
+                        u.targetPosition.set(u.position);
+                        if (u.attackCooldown <= 0) {
+                            if (u.type == Unit.Type.OBELISK) {
+                                applySplashDamage(u, t.position.x, t.position.y);
+                                addCombatEvent(Network.CombatEvent.Type.OBELISK_BLAST, u.position.x, u.position.y, t.position.x, t.position.y);
+                                u.attackCooldown = 3.6f;
+                            } else {
+                                spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId);
+                                u.attackCooldown = 1.0f;
+                            }
+                        }
+                    }
                 }
             }
             if (u.targetBuildingId != null) { Building b = gameState.buildings.get(u.targetBuildingId); if (b == null || b.isComplete) u.targetBuildingId = null; }
             if (u.targetBuildingId == null && u.targetUnitId == null && u.attackTargetBuildingId == null && !u.tasks.isEmpty()) {
-                Network.Task next = u.tasks.remove(0); if (next.type == Network.Task.Type.BUILD) { u.targetBuildingId = next.targetBuildingId; u.targetPosition.set(next.x, next.y); }
+                if (u.position.distance(u.targetPosition) <= 0.5f) {
+                    Network.Task next = u.tasks.remove(0);
+                    if (next.type == Network.Task.Type.MOVE) {
+                        u.targetPosition.set(next.x, next.y);
+                        u.manualMoveOrder = true;
+                    } else if (next.type == Network.Task.Type.BUILD) {
+                        u.targetBuildingId = next.targetBuildingId;
+                        u.targetPosition.set(next.x, next.y);
+                    }
+                }
             }
         }
         Iterator<Map.Entry<Integer, Building>> bIter = gameState.buildings.entrySet().iterator();
@@ -358,6 +415,39 @@ public class ServerLauncher {
         }
     }
 
+    private void applySplashDamage(Unit attacker, float impactX, float impactY) {
+        float splashRadius = 7.0f;
+        float directRadius = 1.9f;
+        float directDamage = attacker.attackDamage;
+        float splashDamage = 120.0f;
+        for (Unit enemy : gameState.units.values()) {
+            if (enemy.teamId == attacker.teamId) continue;
+            float dist = enemy.position.distance(new Vector2f(impactX, impactY));
+            if (dist <= directRadius) {
+                enemy.hp -= directDamage;
+            } else if (dist <= splashRadius) {
+                float falloff = 1.0f - ((dist - directRadius) / Math.max(0.001f, splashRadius - directRadius));
+                enemy.hp -= splashDamage * Math.max(0.25f, falloff);
+            }
+        }
+        for (Building building : gameState.buildings.values()) {
+            if (building.teamId == attacker.teamId || building.type == Building.Type.METAL_PATCH) continue;
+            float dist = building.position.distance(new Vector2f(impactX, impactY));
+            if (dist <= splashRadius) {
+                building.hp -= splashDamage * 0.6f;
+            }
+        }
+    }
+
+    private float getProductionDuration(Unit.Type type) {
+        return switch (type) {
+            case TANK -> 5.0f;
+            case HOUND -> 3.5f;
+            case OBELISK -> 12.0f;
+            default -> 4.0f;
+        };
+    }
+
     private void spawnProjectile(float x, float y, float tx, float ty, float dmg, int teamId) {
         Vector2f dir = new Vector2f(tx - x, ty - y).normalize().mul(40.0f);
         Projectile p = new Projectile(idCounter++, x, y, dir.x, dir.y, dmg, teamId);
@@ -380,7 +470,7 @@ public class ServerLauncher {
                     for (Unit unit : gameState.units.values()) {
                         Network.UnitData data = new Network.UnitData();
                         data.id = unit.id; data.type = unit.type; data.teamId = unit.teamId;
-                        data.x = unit.position.x; data.y = unit.position.y; data.hp = unit.hp; data.maxHp = unit.maxHp;
+                        data.x = unit.position.x; data.y = unit.position.y; data.hp = unit.hp; data.maxHp = unit.maxHp; data.facingDeg = unit.facingDeg;
                         update.units.add(data);
                     }
                     for (Building b : gameState.buildings.values()) {

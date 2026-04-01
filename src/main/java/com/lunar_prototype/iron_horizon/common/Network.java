@@ -83,7 +83,7 @@ public class Network {
     public static class StartGameCommand {}
 
     public static class CombatEvent {
-        public enum Type { ATTACK, EXPLOSION, LASER }
+        public enum Type { ATTACK, EXPLOSION, LASER, OBELISK_BLAST }
         public Type type;
         public float x, y, tx, ty; // Source and Target pos
     }
@@ -94,6 +94,7 @@ public class Network {
         public int teamId;
         public float x, y;
         public float hp, maxHp;
+        public float facingDeg;
         public boolean selected;
     }
     
@@ -124,6 +125,8 @@ public class Network {
         public float targetX, targetY;
         public List<Integer> unitIds = new ArrayList<>();
         public Integer targetBuildingId = null;
+        public List<Vector2f> waypoints = new ArrayList<>();
+        public boolean queue = false;
     }
 
     public static class BuildCommand {

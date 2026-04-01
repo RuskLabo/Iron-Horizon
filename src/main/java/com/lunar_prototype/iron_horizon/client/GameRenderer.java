@@ -7,6 +7,7 @@ import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
 import com.lunar_prototype.iron_horizon.client.render.Mesh;
 import com.lunar_prototype.iron_horizon.client.render.MeshFactory;
+import com.lunar_prototype.iron_horizon.client.render.ObjLoader;
 import com.lunar_prototype.iron_horizon.client.render.TerrainGenerator;
 import com.lunar_prototype.iron_horizon.client.render.TerrainMeshFactory;
 import com.lunar_prototype.iron_horizon.client.render.Texture;
@@ -18,7 +19,9 @@ import org.lwjgl.stb.STBEasyFont;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -45,7 +48,7 @@ public class GameRenderer {
     }
 
     public static class Effect {
-        public enum Type { LASER, EXPLOSION, BUILD_COMPLETE }
+        public enum Type { LASER, EXPLOSION, BUILD_COMPLETE, OBELISK_BLAST }
 
         public Type type;
         public float x, y, tx, ty, life = 1.0f;
@@ -69,10 +72,18 @@ public class GameRenderer {
     private final List<MoveMarker> moveMarkers;
     private final List<CombatMarker> combatMarkers;
     private final List<Effect> effects;
+    private final List<Vector3f> pathPreviewPoints;
     private final List<Network.ProjectileData> projectileData;
     private Mesh cubeMesh;
+    private Mesh houndMesh;
+    private Mesh obeliskMesh;
     private Mesh terrainMesh;
     private Texture grassTexture;
+    private final Map<Integer, Texture> houndTextures = new HashMap<>();
+    private final Map<Integer, Texture> obeliskTextures = new HashMap<>();
+    private final Map<Integer, Float> unitFacingAngles = new HashMap<>();
+    private static final float HOUND_MODEL_YAW_OFFSET = 0.0f;
+    private static final float OBELISK_MODEL_YAW_OFFSET = 0.0f;
 
     private Vector3f cameraPos = new Vector3f(50, 60, 100);
     private float pitch = 60;
@@ -99,6 +110,7 @@ public class GameRenderer {
             List<MoveMarker> moveMarkers,
             List<CombatMarker> combatMarkers,
             List<Effect> effects,
+            List<Vector3f> pathPreviewPoints,
             List<Network.ProjectileData> projectileData) {
         this.window = window;
         this.gameState = gameState;
@@ -108,6 +120,7 @@ public class GameRenderer {
         this.moveMarkers = moveMarkers;
         this.combatMarkers = combatMarkers;
         this.effects = effects;
+        this.pathPreviewPoints = pathPreviewPoints;
         this.projectileData = projectileData;
     }
 
@@ -120,6 +133,30 @@ public class GameRenderer {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         cubeMesh = MeshFactory.createUnitCube();
+        try {
+            houndMesh = ObjLoader.loadFromResource(GameRenderer.class, "/model/scout.obj");
+        } catch (Exception e) {
+            System.err.println("Failed to load Hound model: " + e.getMessage());
+            houndMesh = null;
+        }
+        try {
+            houndTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 0.20f, 0.80f, 1.00f, true));
+            houndTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 1.00f, 0.22f, 0.22f, true));
+        } catch (Exception e) {
+            System.err.println("Failed to load Hound textures: " + e.getMessage());
+        }
+        try {
+            obeliskMesh = ObjLoader.loadFromResource(GameRenderer.class, "/model/obelisk.obj");
+        } catch (Exception e) {
+            System.err.println("Failed to load Obelisk model: " + e.getMessage());
+            obeliskMesh = null;
+        }
+        try {
+            obeliskTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 0.20f, 0.80f, 1.00f, true));
+            obeliskTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 1.00f, 0.22f, 0.22f, true));
+        } catch (Exception e) {
+            System.err.println("Failed to load Obelisk textures: " + e.getMessage());
+        }
         terrainMesh = TerrainMeshFactory.createTerrain();
         grassTexture = Texture.createGrassTexture(MapSettings.TERRAIN_TEXTURE_SIZE, MapSettings.TERRAIN_TEXTURE_SIZE);
         refreshWindowSize();
@@ -144,10 +181,27 @@ public class GameRenderer {
             cubeMesh.close();
             cubeMesh = null;
         }
+        if (houndMesh != null) {
+            houndMesh.close();
+            houndMesh = null;
+        }
+        if (obeliskMesh != null) {
+            obeliskMesh.close();
+            obeliskMesh = null;
+        }
+        for (Texture texture : houndTextures.values()) {
+            texture.close();
+        }
+        houndTextures.clear();
+        for (Texture texture : obeliskTextures.values()) {
+            texture.close();
+        }
+        obeliskTextures.clear();
         if (grassTexture != null) {
             grassTexture.close();
             grassTexture = null;
         }
+        unitFacingAngles.clear();
     }
 
     public void handleKeyboardInput(float dt) {
@@ -191,8 +245,8 @@ public class GameRenderer {
         rightMouseDown = down;
     }
 
-    public void onMouseMoved(double xpos, double ypos, boolean isMenuOpen, Building.Type selectedBuildType) {
-        if (rightMouseDown && selectedBuildType == null && !isMenuOpen) {
+    public void onMouseMoved(double xpos, double ypos, boolean isMenuOpen, Building.Type selectedBuildType, boolean pathDrawing) {
+        if (rightMouseDown && selectedBuildType == null && !isMenuOpen && !pathDrawing) {
             yaw += (float) (xpos - lastMouseX) * 0.2f;
             pitch += (float) (ypos - lastMouseY) * 0.2f;
             pitch = Math.max(-89, Math.min(89, pitch));
@@ -281,6 +335,7 @@ public class GameRenderer {
     private void renderOverlayPass() {
         renderSelectionRanges(currentRenderTeamId);
         renderPathGuides();
+        renderPlannedPathPreview();
         synchronized (effects) {
             renderEffects();
         }
@@ -330,6 +385,7 @@ public class GameRenderer {
         drawText(String.format("Yaw/Pitch: %.1f / %.1f", yaw, pitch), x + 12, y + 134, 1.2f);
         drawText(shortenLine("GL: " + glVersion), x + 12, y + 152, 1.1f);
         drawText(shortenLine(glRenderer), x + 12, y + 168, 1.1f);
+        drawText(shortenLine(glVendor), x + 12, y + 184, 1.1f);
     }
 
     private String shortenLine(String text) {
@@ -469,16 +525,76 @@ public class GameRenderer {
             if (selectedUnitIds.contains(u.id)) glColor3f(1.0f, 1.0f, 0.0f);
             else if (u.teamId == myTeamId) {
                 if (u.type == Unit.Type.CONSTRUCTOR) glColor3f(0.2f, 0.8f, 0.2f);
+                else if (u.type == Unit.Type.HOUND) glColor3f(0.95f, 0.75f, 0.2f);
+                else if (u.type == Unit.Type.OBELISK) glColor3f(0.95f, 0.4f, 1.0f);
                 else glColor3f(0.0f, 0.8f, 1.0f);
             } else glColor3f(1.0f, 0.2f, 0.2f);
-            float sz = (u.type == Unit.Type.CONSTRUCTOR) ? 0.3f : 0.5f;
-            renderCube(sz);
+            if (u.type == Unit.Type.HOUND) {
+                renderHoundModel(u);
+            } else if (u.type == Unit.Type.OBELISK) {
+                renderObeliskModel(u);
+            } else {
+                float sz = (u.type == Unit.Type.CONSTRUCTOR) ? 0.3f : 0.5f;
+                renderCube(sz);
+            }
             glPopMatrix();
             renderProgressBar(u.position.x, 1.5f, u.position.y, 1.0f, u.hp / u.maxHp, 0.2f, 1.0f, 0.2f);
         }
     }
 
+    private void renderHoundModel(Unit unit) {
+        if (houndMesh == null) {
+            renderCube(0.45f);
+            return;
+        }
+        Texture texture = houndTextures.get(unit.teamId);
+        if (texture != null) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, texture.id());
+        }
+        float heading = getUnitFacingHeading(unit, HOUND_MODEL_YAW_OFFSET);
+        glPushMatrix();
+        glTranslatef(0.0f, -0.35f, 0.0f);
+        glRotatef(heading, 0.0f, 1.0f, 0.0f);
+        glScalef(2.4f, 2.4f, 2.4f);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        houndMesh.draw();
+        glPopMatrix();
+        if (texture != null) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDisable(GL_TEXTURE_2D);
+        }
+    }
+
+    private void renderObeliskModel(Unit unit) {
+        if (obeliskMesh == null) {
+            renderCube(0.9f);
+            return;
+        }
+        Texture texture = obeliskTextures.get(unit.teamId);
+        if (texture != null) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, texture.id());
+        }
+        float heading = getUnitFacingHeading(unit, OBELISK_MODEL_YAW_OFFSET);
+        glPushMatrix();
+        glTranslatef(0.0f, -0.10f, 0.0f);
+        glRotatef(heading, 0.0f, 1.0f, 0.0f);
+        glScalef(3.0f, 3.0f, 3.0f);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        obeliskMesh.draw();
+        glPopMatrix();
+        if (texture != null) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDisable(GL_TEXTURE_2D);
+        }
+    }
+
     private void renderProjectiles(int myTeamId) {
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         glLineWidth(5.0f);
         glBegin(GL_LINES);
         synchronized (projectileData) {
@@ -491,17 +607,35 @@ public class GameRenderer {
 
                 float trailLen = 3.0f;
                 float vLen = (float) Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                float tailX = p.x;
+                float tailZ = p.y;
                 if (vLen > 0) {
-                    glVertex3f(p.x - (p.vx / vLen) * trailLen, groundY, p.y - (p.vy / vLen) * trailLen);
-                } else {
-                    glVertex3f(p.x, groundY, p.y);
+                    tailX = p.x - (p.vx / vLen) * trailLen;
+                    tailZ = p.y - (p.vy / vLen) * trailLen;
                 }
+                glColor4f(1.0f, 0.45f, 0.2f, 1.0f);
+                glVertex3f(tailX, groundY, tailZ);
             }
         }
         glEnd();
+        glPointSize(8.0f);
+        glBegin(GL_POINTS);
+        synchronized (projectileData) {
+            for (Network.ProjectileData p : projectileData) {
+                float groundY = terrainHeightAt(p.x, p.y) + 0.5f;
+                glColor4f(1.0f, 1.0f, 0.65f, 1.0f);
+                glVertex3f(p.x, groundY + 0.18f, p.y);
+            }
+        }
+        glEnd();
+        glPointSize(1.0f);
+        glLineWidth(1.0f);
+        glEnable(GL_DEPTH_TEST);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     private void renderEffects() {
+        glDisable(GL_DEPTH_TEST);
         for (Effect e : effects) {
             if (e.type == Effect.Type.LASER) {
                 glLineWidth(2.0f);
@@ -534,6 +668,56 @@ public class GameRenderer {
                 glVertex3f(0, 0, radius);
                 glEnd();
                 glPopMatrix();
+            } else if (e.type == Effect.Type.OBELISK_BLAST) {
+                float radius = 1.0f + (1.0f - e.life) * 7.0f;
+                float baseY = terrainHeightAt(e.tx, e.ty) + 0.2f;
+                glPushMatrix();
+                glTranslatef(e.tx, baseY, e.ty);
+                glColor4f(1.0f, 0.35f, 0.95f, e.life);
+                glLineWidth(4.0f);
+                glBegin(GL_LINE_LOOP);
+                for (int i = 0; i < 48; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 48.0);
+                    glVertex3f((float) Math.cos(angle) * radius, 0, (float) Math.sin(angle) * radius);
+                }
+                glEnd();
+                glBegin(GL_LINES);
+                glVertex3f(0.0f, 0.0f, 0.0f);
+                glVertex3f(0.0f, 2.5f + e.life * 2.0f, 0.0f);
+                glVertex3f(-radius * 0.6f, 0.0f, 0.0f);
+                glVertex3f(-radius * 1.7f, 0.4f, 0.0f);
+                glVertex3f(radius * 0.6f, 0.0f, 0.0f);
+                glVertex3f(radius * 1.7f, 0.4f, 0.0f);
+                glVertex3f(0.0f, 0.0f, -radius * 0.6f);
+                glVertex3f(0.0f, 0.4f, -radius * 1.7f);
+                glVertex3f(0.0f, 0.0f, radius * 0.6f);
+                glVertex3f(0.0f, 0.4f, radius * 1.7f);
+                glEnd();
+                glBegin(GL_LINES);
+                for (int i = 0; i < 16; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 16.0);
+                    float inner = radius * 0.25f;
+                    float outer = radius * (1.2f + (i % 2) * 0.2f);
+                    glVertex3f((float) Math.cos(angle) * inner, 0, (float) Math.sin(angle) * inner);
+                    glVertex3f((float) Math.cos(angle) * outer, 0, (float) Math.sin(angle) * outer);
+                }
+                glEnd();
+                glBegin(GL_QUADS);
+                float spark = radius * 0.28f;
+                glVertex3f(-spark, 0.0f, -spark);
+                glVertex3f(spark, 0.0f, -spark);
+                glVertex3f(spark, 0.0f, spark);
+                glVertex3f(-spark, 0.0f, spark);
+                glEnd();
+                glPopMatrix();
+                glPushMatrix();
+                glTranslatef(e.x, terrainHeightAt(e.x, e.y) + 0.6f, e.y);
+                glColor4f(1.0f, 0.8f, 1.0f, e.life * 0.9f);
+                glBegin(GL_LINES);
+                glVertex3f(0.0f, 0.0f, 0.0f);
+                glVertex3f(e.tx - e.x, 0.0f, e.ty - e.y);
+                glEnd();
+                glPopMatrix();
             } else {
                 float s = (1.0f - e.life) * 3.0f;
                 glColor4f(1, 0.5f, 0, e.life);
@@ -548,6 +732,8 @@ public class GameRenderer {
                 glPopMatrix();
             }
         }
+        glEnable(GL_DEPTH_TEST);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     private void renderBuildPreview(Building.Type selectedBuildType) {
@@ -607,6 +793,43 @@ public class GameRenderer {
             renderPathArrow(target.x, endY, target.z);
         }
         glEnable(GL_DEPTH_TEST);
+    }
+
+    private void renderPlannedPathPreview() {
+        synchronized (pathPreviewPoints) {
+            if (pathPreviewPoints.size() < 2) {
+                return;
+            }
+            glDisable(GL_TEXTURE_2D);
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glLineWidth(3.0f);
+            glColor4f(0.2f, 1.0f, 0.45f, 0.85f);
+            glBegin(GL_LINE_STRIP);
+            for (Vector3f point : pathPreviewPoints) {
+                float y = terrainHeightAt(point.x, point.z) + 0.22f;
+                glVertex3f(point.x, y, point.z);
+            }
+            glEnd();
+            for (int i = 0; i < pathPreviewPoints.size(); i += Math.max(1, pathPreviewPoints.size() / 12)) {
+                Vector3f point = pathPreviewPoints.get(i);
+                float y = terrainHeightAt(point.x, point.z) + 0.24f;
+                glPushMatrix();
+                glTranslatef(point.x, y, point.z);
+                glColor4f(0.7f, 1.0f, 0.9f, 0.95f);
+                glBegin(GL_QUADS);
+                float s = 0.18f;
+                glVertex3f(-s, 0, -s);
+                glVertex3f(s, 0, -s);
+                glVertex3f(s, 0, s);
+                glVertex3f(-s, 0, s);
+                glEnd();
+                glPopMatrix();
+            }
+            glLineWidth(1.0f);
+            glEnable(GL_DEPTH_TEST);
+        }
     }
 
     private Vector3f getUnitGuideTarget(Unit u) {
@@ -834,11 +1057,17 @@ public class GameRenderer {
             else if (hoverLaser) tooltip = describeBuildingType(Building.Type.LASER_TOWER);
         } else if (factory != null) {
             boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
-            boolean hoverBot = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
+            boolean hoverHound = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
+            boolean hoverBot = isInsideRect(mouseX, mouseY, 340, hudY + 10, 150, 60);
+            boolean hoverObelisk = isInsideRect(mouseX, mouseY, 500, hudY + 10, 150, 60);
             renderButton(20, hudY + 10, 150, 60, "TANK (" + factory.productionQueue.size() + ")", true, hoverTank);
-            renderButton(180, hudY + 10, 150, 60, "BOT", true, hoverBot);
+            renderButton(180, hudY + 10, 150, 60, "HOUND", true, hoverHound);
+            renderButton(340, hudY + 10, 150, 60, "BOT", true, hoverBot);
+            renderButton(500, hudY + 10, 150, 60, "OBELISK", true, hoverObelisk);
             if (hoverTank) tooltip = describeUnitType(Unit.Type.TANK);
+            else if (hoverHound) tooltip = describeUnitType(Unit.Type.HOUND);
             else if (hoverBot) tooltip = describeUnitType(Unit.Type.CONSTRUCTOR);
+            else if (hoverObelisk) tooltip = describeUnitType(Unit.Type.OBELISK);
         } else {
             drawText("SELECT ALLIES", 20, hudY + 35, 1.5f);
         }
@@ -951,11 +1180,25 @@ public class GameRenderer {
         List<String> lines = new ArrayList<>();
         if (type == Unit.Type.TANK) {
             lines.add("TANK");
-            lines.add("HP: 300");
-            lines.add("DMG: 25");
-            lines.add("RANGE: 30");
-            lines.add("SPD: 10");
-            lines.add("ROLE: Front-line combat unit");
+            lines.add("HP: 240");
+            lines.add("DMG: 18");
+            lines.add("RANGE: 27");
+            lines.add("SPD: 9");
+            lines.add("ROLE: Balanced front-line unit");
+        } else if (type == Unit.Type.HOUND) {
+            lines.add("HOUND");
+            lines.add("HP: 90");
+            lines.add("DMG: 10");
+            lines.add("RANGE: 24");
+            lines.add("SPD: 18");
+            lines.add("ROLE: Fast scout vehicle");
+        } else if (type == Unit.Type.OBELISK) {
+            lines.add("OBELISK");
+            lines.add("HP: 1150");
+            lines.add("DMG: 320");
+            lines.add("RANGE: 34");
+            lines.add("SPD: 4.5");
+            lines.add("ROLE: Heavy siege artillery");
         } else {
             lines.add("CONSTRUCTOR");
             lines.add("HP: 150");
@@ -965,6 +1208,12 @@ public class GameRenderer {
             lines.add("ROLE: Builds structures");
         }
         return lines;
+    }
+
+    private float getUnitFacingHeading(Unit unit, float yawOffsetDegrees) {
+        float heading = unit.facingDeg + yawOffsetDegrees;
+        unitFacingAngles.put(unit.id, heading);
+        return heading;
     }
 
     private List<String> describeBuildingType(Building.Type type) {

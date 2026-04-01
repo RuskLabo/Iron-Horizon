@@ -35,6 +35,7 @@ public class ClientLauncher {
     private final List<GameRenderer.MoveMarker> moveMarkers = new ArrayList<>();
     private final List<GameRenderer.CombatMarker> combatMarkers = new ArrayList<>();
     private final List<GameRenderer.Effect> effects = new ArrayList<>();
+    private final List<Vector3f> pathPreviewPoints = new ArrayList<>();
     private final List<Network.ProjectileData> projectileData = new ArrayList<>();
     private GameRenderer renderer;
 
@@ -43,10 +44,17 @@ public class ClientLauncher {
     private int winnerPreviously = 0;
     private boolean isMenuOpen = false;
     private boolean debugOverlayEnabled = false;
+    private boolean shiftDown = false;
     private Building.Type selectedBuildType = null;
     private boolean isSelecting = false;
+    private boolean isPathDrawing = false;
+    private boolean pathQueueMode = false;
     private double selectionStartX;
     private double selectionStartY;
+    private double pathStartX;
+    private double pathStartY;
+    private double pathCurrentX;
+    private double pathCurrentY;
 
     public ClientLauncher() {}
 
@@ -83,6 +91,7 @@ public class ClientLauncher {
                 moveMarkers,
                 combatMarkers,
                 effects,
+                pathPreviewPoints,
                 projectileData);
 
         glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
@@ -92,7 +101,7 @@ public class ClientLauncher {
                 if (action == GLFW_PRESS) checkMenuClick(x[0], y[0]);
                 return;
             }
-            boolean shift = (mods & GLFW_MOD_SHIFT) != 0;
+            boolean shift = shiftDown || (mods & GLFW_MOD_SHIFT) != 0;
             if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
                 if (checkUIClick(x[0], y[0])) return;
                 if (!gameState.isStarted || gameState.winnerTeamId != 0) return;
@@ -104,19 +113,30 @@ public class ClientLauncher {
                 selectionStartX = x[0];
                 selectionStartY = y[0];
                 isSelecting = true;
+            } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+                renderer.onRightMouseButton(true);
+                if (selectedBuildType != null) {
+                    selectedBuildType = null;
+                } else if (shift && !selectedUnitIds.isEmpty()) {
+                    startPathDrawing(x[0], y[0]);
+                } else {
+                    handleRightClick(x[0], y[0]);
+                }
             } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
                 if (isSelecting) finishSelection(x[0], y[0]);
                 isSelecting = false;
-            } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-                renderer.onRightMouseButton(true);
-                if (selectedBuildType != null) selectedBuildType = null;
-                else handleRightClick(x[0], y[0]);
             } else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) {
                 renderer.onRightMouseButton(false);
+                if (isPathDrawing) {
+                    finishPathDrawing(x[0], y[0], shift);
+                }
             }
         });
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
+            if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) {
+                shiftDown = action != GLFW_RELEASE;
+            }
             if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
                 debugOverlayEnabled = !debugOverlayEnabled;
                 renderer.setDebugOverlayEnabled(debugOverlayEnabled);
@@ -133,7 +153,12 @@ public class ClientLauncher {
             }
         });
 
-        glfwSetCursorPosCallback(window, (w, xpos, ypos) -> renderer.onMouseMoved(xpos, ypos, isMenuOpen, selectedBuildType));
+        glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
+            renderer.onMouseMoved(xpos, ypos, isMenuOpen, selectedBuildType, isPathDrawing);
+            if (isPathDrawing) {
+                updatePathPreview(xpos, ypos);
+            }
+        });
         glfwSetScrollCallback(window, (w, xoffset, yoffset) -> renderer.onScroll(yoffset, isMenuOpen));
         glfwShowWindow(window);
         renderer.init();
@@ -174,6 +199,7 @@ public class ClientLauncher {
                             unit.teamId = data.teamId;
                             unit.hp = data.hp;
                             unit.maxHp = data.maxHp;
+                            unit.facingDeg = data.facingDeg;
                             gameState.addUnit(unit);
                         }
                         gameState.buildings.clear();
@@ -278,7 +304,9 @@ public class ClientLauncher {
             else if (x > 410 && x < 530) selectedBuildType = Building.Type.LASER_TOWER;
         } else if (factorySelected) {
             if (x > 20 && x < 170) sendProduceCommand(factoryId, Unit.Type.TANK);
-            else if (x > 180 && x < 330) sendProduceCommand(factoryId, Unit.Type.CONSTRUCTOR);
+            else if (x > 180 && x < 330) sendProduceCommand(factoryId, Unit.Type.HOUND);
+            else if (x > 340 && x < 490) sendProduceCommand(factoryId, Unit.Type.CONSTRUCTOR);
+            else if (x > 500 && x < 650) sendProduceCommand(factoryId, Unit.Type.OBELISK);
         }
         return true;
     }
@@ -310,6 +338,43 @@ public class ClientLauncher {
         }
         soundManager.playSound("move");
         sendMoveCommand(x, y);
+    }
+
+    private void startPathDrawing(double x, double y) {
+        isPathDrawing = true;
+        pathQueueMode = true;
+        pathStartX = x;
+        pathStartY = y;
+        pathCurrentX = x;
+        pathCurrentY = y;
+        updatePathPreview(x, y);
+    }
+
+    private void updatePathPreview(double x, double y) {
+        pathCurrentX = x;
+        pathCurrentY = y;
+        synchronized (pathPreviewPoints) {
+            pathPreviewPoints.clear();
+            Vector3f start = renderer.getMouseWorldPos(pathStartX, pathStartY);
+            Vector3f end = renderer.getMouseWorldPos(pathCurrentX, pathCurrentY);
+            float dx = end.x - start.x;
+            float dz = end.z - start.z;
+            float dist = (float) Math.sqrt(dx * dx + dz * dz);
+            int segments = Math.max(2, (int) (dist / 8.0f));
+            for (int i = 0; i <= segments; i++) {
+                float t = i / (float) segments;
+                pathPreviewPoints.add(new Vector3f(start.x + dx * t, 0.0f, start.z + dz * t));
+            }
+        }
+    }
+
+    private void finishPathDrawing(double x, double y, boolean queue) {
+        isPathDrawing = false;
+        updatePathPreview(x, y);
+        Vector3f start = renderer.getMouseWorldPos(pathStartX, pathStartY);
+        Vector3f end = renderer.getMouseWorldPos(x, y);
+        sendMovePathCommand(start.x, start.z, end.x, end.z, pathQueueMode);
+        pathQueueMode = false;
     }
 
     private void sendAttackCommand(Integer targetUnitId, Integer targetBuildingId) {
@@ -423,6 +488,33 @@ public class ClientLauncher {
                 }
             }
         }
+        client.sendTCP(cmd);
+    }
+
+    private void sendMovePathCommand(float startX, float startY, float endX, float endY, boolean queue) {
+        if (selectedUnitIds.isEmpty()) return;
+        synchronized (pathPreviewPoints) {
+            if (pathPreviewPoints.isEmpty()) {
+                Vector3f start = new Vector3f(startX, 0.0f, startY);
+                Vector3f end = new Vector3f(endX, 0.0f, endY);
+                pathPreviewPoints.add(start);
+                pathPreviewPoints.add(end);
+            }
+        }
+        Network.MoveCommand cmd = new Network.MoveCommand();
+        cmd.unitIds.addAll(selectedUnitIds);
+        cmd.queue = queue;
+        cmd.waypoints.clear();
+        float dx = endX - startX;
+        float dy = endY - startY;
+        float dist = (float) Math.sqrt(dx * dx + dy * dy);
+        int segments = Math.max(2, (int) (dist / 8.0f));
+        for (int i = 0; i <= segments; i++) {
+            float t = i / (float) segments;
+            cmd.waypoints.add(new Vector2f(startX + dx * t, startY + dy * t));
+        }
+        cmd.targetX = endX;
+        cmd.targetY = endY;
         client.sendTCP(cmd);
     }
 
