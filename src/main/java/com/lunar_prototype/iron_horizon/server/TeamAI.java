@@ -1,6 +1,7 @@
 package com.lunar_prototype.iron_horizon.server;
 
 import com.lunar_prototype.dark_singularity_api.Singularity;
+import com.lunar_prototype.iron_horizon.common.MapSettings;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
@@ -33,7 +34,10 @@ public class TeamAI {
 
     public TeamAI(int teamId) {
         this.teamId = teamId;
-        this.enemyBaseLoc = (teamId == 1) ? new Vector2f(80, 80) : new Vector2f(20, 20);
+        float spawnMargin = 40.0f;
+        this.enemyBaseLoc = (teamId == 1)
+                ? new Vector2f(MapSettings.WORLD_SIZE - spawnMargin, MapSettings.WORLD_SIZE - spawnMargin)
+                : new Vector2f(spawnMargin, spawnMargin);
         try {
             this.singularity = new Singularity(10, 7);
             int[] conditions = {C_NEED_EXTRACTOR, C_NEED_FACTORY, C_NEED_TANKS, C_READY_TO_ATTACK, C_NEED_DEFENSE, C_ECONOMY_STALLING};
@@ -65,7 +69,7 @@ public class TeamAI {
 
         long extractorCount = myBuildings.stream().filter(b -> b.type == Building.Type.EXTRACTOR && b.isComplete).count();
         long factoryCount = myBuildings.stream().filter(b -> b.type == Building.Type.FACTORY && b.isComplete).count();
-        List<Unit> myTanks = myUnits.stream().filter(u -> u.type == Unit.Type.TANK).collect(Collectors.toList());
+        List<Unit> myTanks = myUnits.stream().filter(u -> u.type == Unit.Type.TANK && !u.manualMoveOrder).collect(Collectors.toList());
         List<Building> incomplete = myBuildings.stream().filter(b -> !b.isComplete).collect(Collectors.toList());
 
         List<Unit> visibleEnemies = allUnits.stream().filter(u -> u.teamId != teamId)
@@ -112,7 +116,7 @@ public class TeamAI {
 
     private void assistExistingConstruction(List<Unit> myUnits, List<Building> incomplete) {
         if (incomplete.isEmpty()) return;
-        myUnits.stream().filter(u -> u.type == Unit.Type.CONSTRUCTOR && u.targetBuildingId == null)
+        myUnits.stream().filter(u -> u.type == Unit.Type.CONSTRUCTOR && u.targetBuildingId == null && !u.manualMoveOrder)
             .forEach(u -> {
                 Building target = incomplete.stream().min((a,b)->Float.compare(a.position.distance(u.position), b.position.distance(u.position))).orElse(incomplete.get(0));
                 u.targetBuildingId = target.id; u.targetPosition.set(target.position);
@@ -140,7 +144,7 @@ public class TeamAI {
     }
 
     private void build(Building.Type type, GameState state, List<Unit> myUnits, List<Building> allBuildings, int teamId) {
-        Unit constructor = myUnits.stream().filter(u -> u.type == Unit.Type.CONSTRUCTOR && u.targetBuildingId == null).findFirst().orElse(null);
+        Unit constructor = myUnits.stream().filter(u -> u.type == Unit.Type.CONSTRUCTOR && u.targetBuildingId == null && !u.manualMoveOrder).findFirst().orElse(null);
         if (constructor == null) return;
         Vector2f pos;
         if (type == Building.Type.EXTRACTOR) {

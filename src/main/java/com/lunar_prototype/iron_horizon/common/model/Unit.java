@@ -26,6 +26,7 @@ public class Unit {
     public float attackCooldown = 0.0f;
     public Integer targetUnitId = null;
     public Integer attackTargetBuildingId = null;
+    public boolean manualMoveOrder = false;
 
     public List<Network.Task> tasks = new ArrayList<>();
 
@@ -60,6 +61,7 @@ public class Unit {
             velocity.set(targetPosition).sub(position).normalize().mul(speed);
         } else {
             velocity.set(0, 0);
+            manualMoveOrder = false;
         }
     }
 

@@ -83,7 +83,7 @@ public class Network {
     public static class StartGameCommand {}
 
     public static class CombatEvent {
-        public enum Type { ATTACK, EXPLOSION }
+        public enum Type { ATTACK, EXPLOSION, LASER }
         public Type type;
         public float x, y, tx, ty; // Source and Target pos
     }

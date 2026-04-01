@@ -4,6 +4,7 @@ import com.esotericsoftware.kryonet.Connection;
 import com.esotericsoftware.kryonet.Listener;
 import com.esotericsoftware.kryonet.Server;
 import com.lunar_prototype.dark_singularity_api.Singularity;
+import com.lunar_prototype.iron_horizon.common.MapSettings;
 import com.lunar_prototype.iron_horizon.common.Network;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
@@ -38,7 +39,10 @@ public class ServerLauncher {
         System.out.println("Initializing Iron Horizon Server...");
         gameState = new GameState();
         spatialGrid = new SpatialGrid(10.0f);
-        setupMap(); setupTeam(1, 20, 20); setupTeam(2, 80, 80);
+        setupMap();
+        float spawnMargin = 40.0f;
+        setupTeam(1, spawnMargin, spawnMargin);
+        setupTeam(2, MapSettings.WORLD_SIZE - spawnMargin, MapSettings.WORLD_SIZE - spawnMargin);
         server = new Server(256000, 256000);
         Network.register(server);
 
@@ -83,8 +87,9 @@ public class ServerLauncher {
                         for (Integer id : cmd.unitIds) {
                             Unit unit = gameState.units.get(id);
                             if (unit != null && unit.teamId == teamId) {
-                                unit.targetPosition.set(cmd.targetX, cmd.targetY);
+                            unit.targetPosition.set(cmd.targetX, cmd.targetY);
                                 unit.targetBuildingId = null; unit.tasks.clear(); unit.targetUnitId = null; unit.attackTargetBuildingId = null;
+                                unit.manualMoveOrder = true;
                                 if (cmd.targetBuildingId != null) {
                                     Building tb = gameState.buildings.get(cmd.targetBuildingId);
                                     if (tb != null && !tb.isComplete && unit.type == Unit.Type.CONSTRUCTOR) {
@@ -114,13 +119,37 @@ public class ServerLauncher {
 
     private void setupMap() {
         java.util.Random r = new java.util.Random();
-        for (int i = 0; i < 15; i++) {
-            float x, y; boolean valid; int attempts = 0;
-            do { x = 10 + r.nextFloat() * 80; y = 10 + r.nextFloat() * 80; valid = true;
-                for (Building b : gameState.buildings.values()) { if (b.position.distance(new Vector2f(x, y)) < 10.0f) { valid = false; break; } }
+        int patchCount = 60;
+        float margin = MapSettings.RESOURCE_GRID_MARGIN;
+        float grid = MapSettings.RESOURCE_GRID_SIZE;
+        int gridCells = (int) (MapSettings.WORLD_SIZE / grid);
+        java.util.HashSet<Long> occupied = new java.util.HashSet<>();
+        for (int i = 0; i < patchCount; i++) {
+            float x = 0;
+            float y = 0;
+            boolean valid = false;
+            int attempts = 0;
+            while (!valid && attempts < 200) {
+                int cellX = 1 + r.nextInt(Math.max(1, gridCells - 2));
+                int cellY = 1 + r.nextInt(Math.max(1, gridCells - 2));
+                x = cellX * grid + grid / 2.0f;
+                y = cellY * grid + grid / 2.0f;
+                long key = (((long) cellX) << 32) | (cellY & 0xffffffffL);
+                valid = x >= margin && y >= margin && x <= MapSettings.WORLD_SIZE - margin && y <= MapSettings.WORLD_SIZE - margin && !occupied.contains(key);
+                if (valid) {
+                    for (Building b : gameState.buildings.values()) {
+                        if (b.position.distance(new Vector2f(x, y)) < 10.0f) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                if (valid) {
+                    occupied.add(key);
+                    gameState.addBuilding(new Building(idCounter++, Building.Type.METAL_PATCH, x, y, 0));
+                }
                 attempts++;
-            } while (!valid && attempts < 100);
-            if (valid) gameState.addBuilding(new Building(idCounter++, Building.Type.METAL_PATCH, x, y, 0));
+            }
         }
     }
 
@@ -191,7 +220,12 @@ public class ServerLauncher {
             for (Building b : gameState.buildings.values()) {
                 if (b.teamId != tid) continue;
                 if (!b.isComplete) {
-                    float cost = (b.type == Building.Type.FACTORY) ? 500 : (b.type == Building.Type.EXTRACTOR ? 300 : 100);
+                    float cost = switch (b.type) {
+                        case FACTORY -> 500;
+                        case EXTRACTOR -> 300;
+                        case LASER_TOWER -> 400;
+                        default -> 100;
+                    };
                     int helpers = (int) gameState.units.values().stream().filter(u -> u.teamId == tid && u.targetBuildingId != null && u.targetBuildingId == b.id && u.position.distance(b.position) < 15.0f).count();
                     if (helpers > 0) drain += (cost * 0.3f) * helpers; // Build speed 0.3
                 } else if (b.type == Building.Type.FACTORY && !b.productionQueue.isEmpty()) {
@@ -205,6 +239,8 @@ public class ServerLauncher {
             float efficiency = 1.0f;
             if (drain > 0 && currentMetal <= 0 && income < drain) efficiency = income / drain;
             gameState.teamMetal.put(tid, Math.max(0, currentMetal + (income - drain * efficiency) * dt));
+
+            applyNexusSupport(tid, dt, efficiency);
 
             for (Building b : gameState.buildings.values()) {
                 if (b.teamId != tid) continue;
@@ -224,6 +260,19 @@ public class ServerLauncher {
                         unit.setType(b.productionQueue.remove(0)); unit.teamId = tid;
                         gameState.addUnit(unit); b.productionTimer = 0;
                     }
+                } else if (b.type == Building.Type.LASER_TOWER) {
+                    b.attackTimer = Math.max(0, b.attackTimer - dt);
+                    if (b.attackTimer <= 0) {
+                        Unit target = gameState.units.values().stream()
+                                .filter(u -> u.teamId != tid && u.position.distance(b.position) <= b.attackRange)
+                                .min((a, c) -> Float.compare(a.position.distance(b.position), c.position.distance(b.position)))
+                                .orElse(null);
+                        if (target != null) {
+                            target.hp -= b.attackDamage;
+                            addCombatEvent(Network.CombatEvent.Type.LASER, b.position.x, b.position.y, target.position.x, target.position.y);
+                            b.attackTimer = b.attackCooldown;
+                        }
+                    }
                 }
             }
         }
@@ -241,9 +290,14 @@ public class ServerLauncher {
         Iterator<Map.Entry<Integer, Unit>> unitIter = gameState.units.entrySet().iterator();
         while (unitIter.hasNext()) {
             Unit u = unitIter.next().getValue();
-            if (u.hp <= 0) { addCombatEvent(Network.CombatEvent.Type.EXPLOSION, u.position.x, u.position.y, 0, 0); unitIter.remove(); continue; }
+            if (u.hp <= 0) {
+                addCombatEvent(Network.CombatEvent.Type.EXPLOSION, u.position.x, u.position.y, 0, 0);
+                awardNexusSalvage(u);
+                unitIter.remove();
+                continue;
+            }
             if (u.attackCooldown > 0) u.attackCooldown -= dt;
-            if (u.type == Unit.Type.TANK && u.targetUnitId == null && u.attackTargetBuildingId == null) {
+            if (u.type == Unit.Type.TANK && u.targetUnitId == null && u.attackTargetBuildingId == null && !u.manualMoveOrder) {
                 for (Unit enemy : gameState.units.values()) { if (enemy.teamId != u.teamId && enemy.position.distance(u.position) < u.attackRange) { u.targetUnitId = enemy.id; break; } }
             }
             if (u.targetUnitId != null) {
@@ -273,6 +327,30 @@ public class ServerLauncher {
         boolean n1 = false, n2 = false;
         for (Building b : gameState.buildings.values()) if (b.type == Building.Type.NEXUS) { if (b.teamId == 1) n1 = true; if (b.teamId == 2) n2 = true; }
         if (!n1) gameState.winnerTeamId = 2; else if (!n2) gameState.winnerTeamId = 1;
+    }
+
+    private void applyNexusSupport(int teamId, float dt, float efficiency) {
+        for (Building nexus : gameState.buildings.values()) {
+            if (nexus.teamId != teamId || nexus.type != Building.Type.NEXUS || !nexus.isComplete) continue;
+            for (Unit unit : gameState.units.values()) {
+                if (unit.teamId != teamId) continue;
+                if (unit.position.distance(nexus.position) <= 20.0f) {
+                    unit.hp = Math.min(unit.maxHp, unit.hp + 35.0f * dt * efficiency);
+                }
+            }
+        }
+    }
+
+    private void awardNexusSalvage(Unit deadUnit) {
+        float salvageRadius = 20.0f;
+        float salvageAmount = deadUnit.type == Unit.Type.TANK ? 35.0f : 20.0f;
+        for (Building nexus : gameState.buildings.values()) {
+            if (nexus.type != Building.Type.NEXUS || !nexus.isComplete || nexus.teamId == deadUnit.teamId) continue;
+            if (nexus.position.distance(deadUnit.position) <= salvageRadius) {
+                gameState.teamMetal.put(nexus.teamId, gameState.getMetal(nexus.teamId) + salvageAmount);
+                return;
+            }
+        }
     }
 
     private void spawnProjectile(float x, float y, float tx, float ty, float dmg, int teamId) {
