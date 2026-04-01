@@ -7,19 +7,21 @@ public class GameState {
     public Map<Integer, Unit> units = new ConcurrentHashMap<>();
     public Map<Integer, Building> buildings = new ConcurrentHashMap<>();
     public Map<Integer, Projectile> projectiles = new ConcurrentHashMap<>();
-    public Map<Integer, Float> teamMetal = new ConcurrentHashMap<>();
-    public Map<Integer, Float> teamIncome = new ConcurrentHashMap<>();
-    public Map<Integer, Float> teamDrain = new ConcurrentHashMap<>();
+    
+    // Player-specific resources
+    public Map<Integer, Float> playerMetal = new ConcurrentHashMap<>();
+    public Map<Integer, Float> playerIncome = new ConcurrentHashMap<>();
+    public Map<Integer, Float> playerDrain = new ConcurrentHashMap<>();
+    
     public boolean isStarted = false;
     public int winnerTeamId = 0;
+    public Map<Integer, String> teamNames = new ConcurrentHashMap<>();
 
     public GameState() {
-        teamMetal.put(1, 1000.0f); // Starting metal
-        teamMetal.put(2, 1000.0f);
     }
 
-    public float getMetal(int teamId) {
-        return teamMetal.getOrDefault(teamId, 0.0f);
+    public float getMetal(int playerId) {
+        return playerMetal.getOrDefault(playerId, 0.0f);
     }
 
     public void addUnit(Unit unit) {

@@ -66,10 +66,14 @@ public class Network {
         public List<UnitData> units = new ArrayList<>();
         public List<BuildingData> buildings = new ArrayList<>();
         public List<ProjectileData> projectiles = new ArrayList<>();
-        public Map<Integer, Float> teamMetal = new HashMap<>();
-        public Map<Integer, Float> teamIncome = new HashMap<>();
-        public Map<Integer, Float> teamDrain = new HashMap<>();
+        public Map<Integer, Float> playerMetal = new HashMap<>();
+        public Map<Integer, Float> playerIncome = new HashMap<>();
+        public Map<Integer, Float> playerDrain = new HashMap<>();
+        public Map<Integer, String> teamNames = new HashMap<>();
         public List<CombatEvent> events = new ArrayList<>();
+        public List<Integer> removedUnitIds = new ArrayList<>();
+        public List<Integer> removedBuildingIds = new ArrayList<>();
+        public boolean isFullUpdate = false;
         public boolean isStarted;
         public int winnerTeamId;
     }
@@ -92,10 +96,12 @@ public class Network {
         public int id;
         public Unit.Type type;
         public int teamId;
+        public int ownerId;
         public float x, y;
         public float hp, maxHp;
         public float facingDeg;
         public boolean selected;
+        public List<Task> tasks = new ArrayList<>();
     }
     
     public static class AttackCommand {
@@ -108,6 +114,7 @@ public class Network {
         public int id;
         public Building.Type type;
         public int teamId;
+        public int ownerId;
         public float x, y;
         public float hp, maxHp;
         public float buildProgress;

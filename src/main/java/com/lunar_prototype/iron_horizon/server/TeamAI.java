@@ -5,6 +5,7 @@ import com.lunar_prototype.iron_horizon.common.MapSettings;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
+import com.lunar_prototype.iron_horizon.ServerLauncher;
 import org.joml.Vector2f;
 
 import java.util.ArrayList;
@@ -39,18 +40,15 @@ public class TeamAI {
                 ? new Vector2f(MapSettings.WORLD_SIZE - spawnMargin, MapSettings.WORLD_SIZE - spawnMargin)
                 : new Vector2f(spawnMargin, spawnMargin);
         try {
-            // Singularity 内部のハミルトニアン学習エンジンを初期化
             this.singularity = new Singularity(16, 10);
-
-            // イミテーション学習 (IRL): エキスパートの行動を観察させて「定石」を学習
-            singularity.observeExpert(C_NEED_EXTRACTOR, new int[]{1}, 5.0f); // 資源不足 -> Extractor
-            singularity.observeExpert(C_NEED_FACTORY, new int[]{2}, 5.0f);   // 工場不足 -> Factory
-            singularity.observeExpert(C_NEED_TANKS, new int[]{3}, 4.0f);     // 戦力不足 -> Tank
-            singularity.observeExpert(C_NEED_DEFENSE, new int[]{7}, 8.0f);   // 防衛必要 -> Laser Tower
-            singularity.observeExpert(C_NEED_SCOUT, new int[]{8}, 6.0f);     // 偵察必要 -> Hound
-            singularity.observeExpert(C_NEED_OBELISK, new int[]{9}, 7.0f);   // 遠距離火欲 -> Obelisk
-            singularity.observeExpert(C_READY_TO_ATTACK, new int[]{5}, 6.0f); // 準備完了 -> 攻撃開始
-            singularity.observeExpert(C_ECONOMY_STALLING, new int[]{0}, 4.0f); // リソース枯渇 -> 一時停止
+            singularity.observeExpert(C_NEED_EXTRACTOR, new int[]{1}, 5.0f);
+            singularity.observeExpert(C_NEED_FACTORY, new int[]{2}, 5.0f);
+            singularity.observeExpert(C_NEED_TANKS, new int[]{3}, 4.0f);
+            singularity.observeExpert(C_NEED_DEFENSE, new int[]{7}, 8.0f);
+            singularity.observeExpert(C_NEED_SCOUT, new int[]{8}, 6.0f);
+            singularity.observeExpert(C_NEED_OBELISK, new int[]{9}, 7.0f);
+            singularity.observeExpert(C_READY_TO_ATTACK, new int[]{5}, 6.0f);
+            singularity.observeExpert(C_ECONOMY_STALLING, new int[]{0}, 4.0f);
 
             int[] conditions = {C_NEED_EXTRACTOR, C_NEED_FACTORY, C_NEED_TANKS, C_READY_TO_ATTACK, C_NEED_DEFENSE, C_ECONOMY_STALLING, C_NEED_SCOUT, C_NEED_OBELISK};
             int[] actions = {1, 2, 3, 5, 7, 0, 8, 9}; 
@@ -59,7 +57,7 @@ public class TeamAI {
         } catch (UnsatisfiedLinkError e) { e.printStackTrace(); }
     }
 
-    public void update(GameState gameState, float dt, Map<Integer, Float> teamIncome, Map<Integer, Float> teamDrain) {
+    public void update(GameState gameState, float dt, Map<Integer, Float> playerIncome, Map<Integer, Float> playerDrain) {
         if (!gameState.isStarted || gameState.winnerTeamId != 0 || singularity == null) return;
 
         decisionTimer += dt;
@@ -74,9 +72,10 @@ public class TeamAI {
         List<Unit> myUnits = allUnits.stream().filter(u -> u.teamId == teamId).collect(Collectors.toList());
         List<Building> myBuildings = allBuildings.stream().filter(b -> b.teamId == teamId).collect(Collectors.toList());
         
-        float income = teamIncome.getOrDefault(teamId, 0f);
-        float drain = teamDrain.getOrDefault(teamId, 0f);
-        float metal = gameState.teamMetal.getOrDefault(teamId, 0f);
+        int pid = ServerLauncher.AI_PLAYER_ID; // Use AI player PID for resources
+        float income = playerIncome.getOrDefault(pid, 0f);
+        float drain = playerDrain.getOrDefault(pid, 0f);
+        float metal = gameState.getMetal(pid);
         boolean stalling = (metal <= 0 && drain > income);
 
         long extractorCount = myBuildings.stream().filter(b -> b.type == Building.Type.EXTRACTOR && b.isComplete).count();
@@ -99,7 +98,6 @@ public class TeamAI {
         if (myTanks.size() + myObelisks.size() * 2 >= 8) isAssaultMode = true;
         if (myTanks.size() + myObelisks.size() == 0) isAssaultMode = false;
 
-        // 1. Conditions
         List<Integer> activeCons = new ArrayList<>();
         if (stalling) activeCons.add(C_ECONOMY_STALLING);
         if (baseUnderAttack) activeCons.add(C_NEED_DEFENSE);
@@ -111,7 +109,6 @@ public class TeamAI {
         if (isAssaultMode && !baseUnderAttack) activeCons.add(C_READY_TO_ATTACK);
         singularity.setActiveConditions(activeCons.stream().mapToInt(i -> i).toArray());
 
-        // 2. State Vector (16-D)
         float[] state = new float[16];
         state[0] = metal / 3000f;
         state[1] = myTanks.size() / 30f;
@@ -128,11 +125,10 @@ public class TeamAI {
         state[12] = isAssaultMode ? 1f : 0f;
         state[13] = temp;
         state[14] = (myNexus != null ? myNexus.hp / myNexus.maxHp : 0f);
-        state[15] = (float)Math.random(); // Entropy
+        state[15] = (float)Math.random();
 
         int action = singularity.selectAction(state);
         
-        // 3. Execution
         switch (action) {
             case 1 -> { if (incomplete.isEmpty() || income > 60) build(Building.Type.EXTRACTOR, gameState, myUnits, allBuildings, teamId); }
             case 2 -> { if (!stalling && factoryCount < 3) build(Building.Type.FACTORY, gameState, myUnits, allBuildings, teamId); }
@@ -143,10 +139,8 @@ public class TeamAI {
             case 7 -> { if (towerCount < 5) build(Building.Type.LASER_TOWER, gameState, myUnits, allBuildings, teamId); }
             case 8 -> produce(Unit.Type.HOUND, myBuildings);
             case 9 -> produce(Unit.Type.OBELISK, myBuildings);
-            case 0 -> { /* Idle / Conserve */ }
         }
         if (!incomplete.isEmpty()) assistExistingConstruction(myUnits, incomplete);
-
         singularity.learn(stalling ? -0.2f : (baseUnderAttack ? -0.1f : 0.15f));
     }
 
@@ -165,45 +159,33 @@ public class TeamAI {
         
         for (Unit u : myUnits) {
             if (u.type == Unit.Type.CONSTRUCTOR) continue;
-
-            // Unit specific logic
             if (u.type == Unit.Type.HOUND) {
-                // Scout logic: deep penetration or finding targets for Obelisks
                 Unit target = visibleEnemies.stream().min((a,b)->Float.compare(a.position.distance(u.position), b.position.distance(u.position))).orElse(null);
-                if (target != null) {
-                    u.targetUnitId = target.id;
-                } else if (isAssaultMode) {
-                    u.targetPosition.set(enemyBaseLoc);
-                } else if (myNexus != null) {
-                    // Patrol around base
+                if (target != null) u.targetUnitId = target.id;
+                else if (isAssaultMode) u.targetPosition.set(enemyBaseLoc);
+                else if (myNexus != null) {
                     float angle = (float)(System.currentTimeMillis() / 2000.0 % (Math.PI * 2));
                     u.targetPosition.set(myNexus.position.x + (float)Math.cos(angle)*60, myNexus.position.y + (float)Math.sin(angle)*60);
                 }
             } else if (u.type == Unit.Type.OBELISK) {
-                // Long range support: stay back and fire at visible targets
                 Unit target = visibleEnemies.stream().min((a,b)->Float.compare(a.position.distance(u.position), b.position.distance(u.position))).orElse(null);
                 if (target != null) {
                     float dist = u.position.distance(target.position);
                     if (dist < u.attackRange * 0.8f) {
-                        // Back away if too close
                         Vector2f away = new Vector2f(u.position).sub(target.position).normalize().mul(15.0f).add(u.position);
                         u.targetPosition.set(away);
-                    } else {
-                        u.targetUnitId = target.id;
-                    }
+                    } else u.targetUnitId = target.id;
                 } else if (isAssaultMode) {
-                    // Move to a position where enemy base is just in range
                     Vector2f movePos = new Vector2f(enemyBaseLoc).sub(u.position).normalize().mul(-u.attackRange * 0.9f).add(enemyBaseLoc);
                     u.targetPosition.set(movePos);
                 }
             } else {
-                // Tanks and others
                 Unit target = visibleEnemies.stream().filter(e -> e.position.distance(u.position) < 50.0f).findFirst().orElse(null);
                 if (target != null) { u.targetUnitId = target.id; u.attackTargetBuildingId = null; }
                 else if (isAssaultMode) {
                     Building tb = enemyBuildings.stream().filter(b -> b.position.distance(u.position) < 60.0f).findFirst().orElse(enemyNexus);
-                    if (tb != null) { u.attackTargetBuildingId = tb.id; u.targetUnitId = null; }
-                    else { u.targetPosition.set(enemyBaseLoc); u.targetUnitId = null; u.attackTargetBuildingId = null; }
+                    if (tb != null) u.attackTargetBuildingId = tb.id;
+                    else u.targetPosition.set(enemyBaseLoc);
                 } else if (myNexus != null) {
                     u.targetPosition.set(myNexus.position.x + 15, myNexus.position.y + 15);
                 }
@@ -229,7 +211,7 @@ public class TeamAI {
             Building nexus = allBuildings.stream().filter(b -> b.type == Building.Type.NEXUS && b.teamId == teamId).findFirst().orElse(null);
             pos = new Vector2f(nexus != null ? nexus.position : constructor.position).add((float)Math.random()*60-30, (float)Math.random()*60-30);
         }
-        Building b = new Building(state.hashCode() + (int)System.nanoTime(), type, pos.x, pos.y, teamId);
+        Building b = new Building(state.hashCode() + (int)System.nanoTime(), type, pos.x, pos.y, teamId, ServerLauncher.AI_PLAYER_ID);
         state.addBuilding(b);
         constructor.targetBuildingId = b.id; constructor.targetPosition.set(b.position);
     }

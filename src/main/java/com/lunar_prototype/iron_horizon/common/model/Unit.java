@@ -11,6 +11,7 @@ public class Unit {
     public int id;
     public Type type = Type.TANK;
     public int teamId;
+    public int ownerId;
     public Vector2f position = new Vector2f();
     public Vector2f velocity = new Vector2f();
     public Vector2f targetPosition = new Vector2f();

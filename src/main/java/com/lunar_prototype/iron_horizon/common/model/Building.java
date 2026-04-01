@@ -12,6 +12,7 @@ public class Building {
     public Type type;
     public Vector2f position = new Vector2f();
     public int teamId;
+    public int ownerId;
     public float hp;
     public float maxHp;
     public float size = 2.0f;
@@ -30,11 +31,12 @@ public class Building {
 
     public Building() {}
 
-    public Building(int id, Type type, float x, float y, int teamId) {
+    public Building(int id, Type type, float x, float y, int teamId, int ownerId) {
         this.id = id;
         this.type = type;
         this.position.set(x, y);
         this.teamId = teamId;
+        this.ownerId = ownerId;
         this.isComplete = (type == Type.NEXUS); // Nexus starts complete
         this.buildProgress = isComplete ? 1.0f : 0.0f;
         

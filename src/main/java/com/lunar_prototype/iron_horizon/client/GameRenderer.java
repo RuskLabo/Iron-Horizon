@@ -50,7 +50,9 @@ public class GameRenderer {
     }
 
     public static class Effect {
-        public enum Type { LASER, EXPLOSION, BUILD_COMPLETE, OBELISK_BLAST }
+        public enum Type {
+            LASER, EXPLOSION, BUILD_COMPLETE, OBELISK_BLAST
+        }
 
         public Type type;
         public float x, y, tx, ty, life = 1.0f;
@@ -109,6 +111,7 @@ public class GameRenderer {
     private int framebufferWidth = 1280;
     private int framebufferHeight = 720;
     private int currentRenderTeamId = 0;
+    private int currentRenderPlayerId = 0;
     private boolean debugOverlayEnabled = false;
     private String glVersion = "";
     private String glRenderer = "";
@@ -137,6 +140,11 @@ public class GameRenderer {
         this.pathPreviewPoints = pathPreviewPoints;
         this.projectileData = projectileData;
         this.localUnitTargets = localUnitTargets;
+    }
+
+    public void setPlayerContext(int teamId, int playerId) {
+        this.currentRenderTeamId = teamId;
+        this.currentRenderPlayerId = playerId;
     }
 
     public void init() {
@@ -181,8 +189,10 @@ public class GameRenderer {
             houndMesh = null;
         }
         try {
-            houndTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 0.20f, 0.80f, 1.00f, true));
-            houndTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 1.00f, 0.22f, 0.22f, true));
+            houndTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 0.20f, 0.80f,
+                    1.00f, true));
+            houndTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture.png", 1.00f, 0.22f,
+                    0.22f, true));
         } catch (Exception e) {
             System.err.println("Failed to load Hound textures: " + e.getMessage());
         }
@@ -193,8 +203,10 @@ public class GameRenderer {
             obeliskMesh = null;
         }
         try {
-            obeliskTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 0.20f, 0.80f, 1.00f, true));
-            obeliskTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 1.00f, 0.22f, 0.22f, true));
+            obeliskTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 0.20f,
+                    0.80f, 1.00f, true));
+            obeliskTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture2.png", 1.00f,
+                    0.22f, 0.22f, true));
         } catch (Exception e) {
             System.err.println("Failed to load Obelisk textures: " + e.getMessage());
         }
@@ -316,7 +328,8 @@ public class GameRenderer {
         rightMouseDown = down;
     }
 
-    public void onMouseMoved(double xpos, double ypos, boolean isMenuOpen, Building.Type selectedBuildType, boolean pathDrawing) {
+    public void onMouseMoved(double xpos, double ypos, boolean isMenuOpen, Building.Type selectedBuildType,
+            boolean pathDrawing) {
         if (rightMouseDown && selectedBuildType == null && !isMenuOpen && !pathDrawing) {
             yaw += (float) (xpos - lastMouseX) * 0.2f;
             pitch += (float) (ypos - lastMouseY) * 0.2f;
@@ -339,7 +352,7 @@ public class GameRenderer {
         Matrix4f vp = buildViewProjection();
         Vector3f near = new Vector3f();
         Vector3f far = new Vector3f();
-        int[] viewport = {0, 0, framebufferWidth, framebufferHeight};
+        int[] viewport = { 0, 0, framebufferWidth, framebufferHeight };
         vp.unproject(fx, (float) framebufferHeight - fy, 0, viewport, near);
         vp.unproject(fx, (float) framebufferHeight - fy, 1, viewport, far);
         float t = -near.y / (far.y - near.y);
@@ -349,7 +362,7 @@ public class GameRenderer {
     public Vector3f projectWorldToScreen(float worldX, float worldY, float worldZ) {
         Matrix4f vp = buildViewProjection();
         Vector3f screen = new Vector3f(worldX, worldY, worldZ);
-        int[] viewport = {0, 0, framebufferWidth, framebufferHeight};
+        int[] viewport = { 0, 0, framebufferWidth, framebufferHeight };
         vp.project(screen, viewport, screen);
         screen.x = toWindowX(screen.x);
         screen.y = windowHeight - toWindowY(screen.y);
@@ -387,6 +400,104 @@ public class GameRenderer {
             setup2D();
             renderDebugOverlay(fps, frameTimeMs);
         }
+    }
+
+    public void renderInitialSetupScreen(String ip, String username, int activeField, boolean connecting) {
+        glDisable(GL_DEPTH_TEST);
+        setup2D();
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // 背景
+        glColor4f(0.03f, 0.05f, 0.04f, 1.0f);
+        glBegin(GL_QUADS);
+        glVertex2f(0, 0);
+        glVertex2f(windowWidth, 0);
+        glVertex2f(windowWidth, windowHeight);
+        glVertex2f(0, windowHeight);
+        glEnd();
+
+        float pW = 500.0f;
+        float pH = 400.0f;
+        float px = (windowWidth - pW) * 0.5f;
+        float py = (windowHeight - pH) * 0.5f;
+
+        // パネル
+        glColor4f(0.02f, 0.04f, 0.02f, 0.95f);
+        glBegin(GL_QUADS);
+        glVertex2f(px, py);
+        glVertex2f(px + pW, py);
+        glVertex2f(px + pW, py + pH);
+        glVertex2f(px, py + pH);
+        glEnd();
+
+        glColor4f(0.2f, 0.8f, 0.35f, 0.9f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(px, py);
+        glVertex2f(px + pW, py);
+        glVertex2f(px + pW, py + pH);
+        glVertex2f(px, py + pH);
+        glEnd();
+
+        drawText("DEPLOYMENT SETTINGS", px + 30, py + 50, 2.0f);
+
+        // IP 入力欄
+        drawText("SERVER ADDRESS", px + 30, py + 100, 1.2f);
+        renderInputField(px + 30, py + 120, pW - 60, 40, ip, activeField == 0);
+
+        // Username 入力欄
+        drawText("COMMANDER NAME", px + 30, py + 190, 1.2f);
+        renderInputField(px + 30, py + 210, pW - 60, 40, username, activeField == 1);
+
+        if (connecting) {
+            drawText("CONNECTING...", px + 30, py + 300, 1.5f);
+        } else {
+            // ボタンのヒント的な描画（判定は Launcher 側）
+            renderButton(px + 30, py + 280, 210, 50, "CONNECT", 0.2f, 0.6f, 0.3f);
+            renderButton(px + 260, py + 280, 210, 50, "LOCAL", 0.3f, 0.4f, 0.6f);
+            drawText("Press ENTER to Connect / ESC to Quit", px + 30, py + 360, 1.0f);
+        }
+    }
+
+    private void renderInputField(float x, float y, float w, float h, String text, boolean active) {
+        if (active)
+            glColor4f(0.1f, 0.25f, 0.15f, 1.0f);
+        else
+            glColor4f(0.05f, 0.1f, 0.05f, 1.0f);
+
+        glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + w, y);
+        glVertex2f(x + w, y + h);
+        glVertex2f(x, y + h);
+        glEnd();
+
+        if (active)
+            glColor4f(0.4f, 1.0f, 0.6f, 1.0f);
+        else
+            glColor4f(0.2f, 0.5f, 0.3f, 1.0f);
+
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(x, y);
+        glVertex2f(x + w, y);
+        glVertex2f(x + w, y + h);
+        glVertex2f(x, y + h);
+        glEnd();
+
+        drawText(text + (active && (System.currentTimeMillis() / 500 % 2 == 0) ? "_" : ""), x + 10, y + 25, 1.5f);
+    }
+
+    private void renderButton(float x, float y, float w, float h, String label, float r, float g, float b) {
+        glColor4f(r, g, b, 0.8f);
+        glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + w, y);
+        glVertex2f(x + w, y + h);
+        glVertex2f(x, y + h);
+        glEnd();
+
+        glColor4f(1, 1, 1, 0.9f);
+        float tw = label.length() * 12.0f; // 簡易的な幅計算
+        drawText(label, x + (w - tw) / 2, y + 30, 1.5f);
     }
 
     public void renderLoadingScreen(String title, String detail, float progress) {
@@ -505,7 +616,8 @@ public class GameRenderer {
         drawText(String.format("Frame: %.2f ms", frameTimeMs), x + 12, y + 62, 1.35f);
         drawText(String.format("Window: %d x %d", windowWidth, windowHeight), x + 12, y + 80, 1.2f);
         drawText(String.format("Framebuffer: %d x %d", framebufferWidth, framebufferHeight), x + 12, y + 98, 1.2f);
-        drawText(String.format("Camera: %.1f, %.1f, %.1f", cameraPos.x, cameraPos.y, cameraPos.z), x + 12, y + 116, 1.2f);
+        drawText(String.format("Camera: %.1f, %.1f, %.1f", cameraPos.x, cameraPos.y, cameraPos.z), x + 12, y + 116,
+                1.2f);
         drawText(String.format("Yaw/Pitch: %.1f / %.1f", yaw, pitch), x + 12, y + 134, 1.2f);
         drawText(shortenLine("GL: " + glVersion), x + 12, y + 152, 1.1f);
         drawText(shortenLine(glRenderer), x + 12, y + 168, 1.1f);
@@ -513,8 +625,10 @@ public class GameRenderer {
     }
 
     private String shortenLine(String text) {
-        if (text == null) return "";
-        if (text.length() <= 42) return text;
+        if (text == null)
+            return "";
+        if (text.length() <= 42)
+            return text;
         return text.substring(0, 39) + "...";
     }
 
@@ -527,7 +641,8 @@ public class GameRenderer {
         glEnable(GL_DEPTH_TEST);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        Matrix4f proj = new Matrix4f().perspective((float) Math.toRadians(45.0f), (float) framebufferWidth / framebufferHeight, 0.1f, 1000.0f);
+        Matrix4f proj = new Matrix4f().perspective((float) Math.toRadians(45.0f),
+                (float) framebufferWidth / framebufferHeight, 0.1f, 1000.0f);
         float[] buffer = new float[16];
         proj.get(buffer);
         glLoadMatrixf(buffer);
@@ -550,22 +665,26 @@ public class GameRenderer {
     }
 
     private float toFramebufferX(double windowX) {
-        if (windowWidth <= 0) return (float) windowX;
+        if (windowWidth <= 0)
+            return (float) windowX;
         return (float) (windowX * framebufferWidth / (double) windowWidth);
     }
 
     private float toFramebufferY(double windowY) {
-        if (windowHeight <= 0) return (float) windowY;
+        if (windowHeight <= 0)
+            return (float) windowY;
         return (float) (windowY * framebufferHeight / (double) windowHeight);
     }
 
     private float toWindowX(float framebufferX) {
-        if (framebufferWidth <= 0) return framebufferX;
+        if (framebufferWidth <= 0)
+            return framebufferX;
         return framebufferX * windowWidth / (float) framebufferWidth;
     }
 
     private float toWindowY(float framebufferY) {
-        if (framebufferHeight <= 0) return framebufferY;
+        if (framebufferHeight <= 0)
+            return framebufferY;
         return framebufferY * windowHeight / (float) framebufferHeight;
     }
 
@@ -597,10 +716,14 @@ public class GameRenderer {
             if (b.type == Building.Type.METAL_PATCH) {
                 glColor3f(1.0f, 0.5f, 0.0f);
             } else if (b.isComplete) {
-                if (b.teamId == myTeamId) glColor3f(0.2f, 0.5f, 1.0f);
-                else glColor3f(1.0f, 0.2f, 0.2f);
-                if (b.type == Building.Type.NEXUS) glColor3f(0.8f, 0.2f, 0.8f);
-                else if (b.type == Building.Type.LASER_TOWER) glColor3f(0.9f, 0.9f, 0.2f);
+                if (b.teamId == myTeamId)
+                    glColor3f(0.2f, 0.5f, 1.0f);
+                else
+                    glColor3f(1.0f, 0.2f, 0.2f);
+                if (b.type == Building.Type.NEXUS)
+                    glColor3f(0.8f, 0.2f, 0.8f);
+                else if (b.type == Building.Type.LASER_TOWER)
+                    glColor3f(0.9f, 0.9f, 0.2f);
             } else {
                 glColor4f(1, 1, 1, 0.3f + b.buildProgress * 0.7f);
             }
@@ -621,11 +744,14 @@ public class GameRenderer {
 
             if (b.type != Building.Type.METAL_PATCH) {
                 if (!b.isComplete) {
-                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.buildProgress, 0.2f, 0.5f, 1.0f);
+                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.buildProgress, 0.2f, 0.5f,
+                            1.0f);
                 } else {
-                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.hp / b.maxHp, 0.2f, 1.0f, 0.2f);
+                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.hp / b.maxHp, 0.2f, 1.0f,
+                            0.2f);
                     if (b.type == Building.Type.FACTORY && !b.productionQueue.isEmpty()) {
-                        renderProgressBar(b.position.x, b.size + 1.5f, b.position.y, 3.0f, b.productionTimer, 1.0f, 0.8f, 0.0f);
+                        renderProgressBar(b.position.x, b.size + 1.5f, b.position.y, 3.0f, b.productionTimer, 1.0f,
+                                0.8f, 0.0f);
                     }
                 }
             }
@@ -646,13 +772,19 @@ public class GameRenderer {
         for (Unit u : gameState.units.values()) {
             glPushMatrix();
             glTranslatef(u.position.x, terrainHeightAt(u.position.x, u.position.y) + 0.5f, u.position.y);
-            if (selectedUnitIds.contains(u.id)) glColor3f(1.0f, 1.0f, 0.0f);
+            if (selectedUnitIds.contains(u.id))
+                glColor3f(1.0f, 1.0f, 0.0f);
             else if (u.teamId == myTeamId) {
-                if (u.type == Unit.Type.CONSTRUCTOR) glColor3f(0.2f, 0.8f, 0.2f);
-                else if (u.type == Unit.Type.HOUND) glColor3f(0.95f, 0.75f, 0.2f);
-                else if (u.type == Unit.Type.OBELISK) glColor3f(0.95f, 0.4f, 1.0f);
-                else glColor3f(0.0f, 0.8f, 1.0f);
-            } else glColor3f(1.0f, 0.2f, 0.2f);
+                if (u.type == Unit.Type.CONSTRUCTOR)
+                    glColor3f(0.2f, 0.8f, 0.2f);
+                else if (u.type == Unit.Type.HOUND)
+                    glColor3f(0.95f, 0.75f, 0.2f);
+                else if (u.type == Unit.Type.OBELISK)
+                    glColor3f(0.95f, 0.4f, 1.0f);
+                else
+                    glColor3f(0.0f, 0.8f, 1.0f);
+            } else
+                glColor3f(1.0f, 0.2f, 0.2f);
             if (u.type == Unit.Type.HOUND) {
                 renderHoundModel(u, dt);
             } else if (u.type == Unit.Type.OBELISK) {
@@ -723,8 +855,10 @@ public class GameRenderer {
         glBegin(GL_LINES);
         synchronized (projectileData) {
             for (Network.ProjectileData p : projectileData) {
-                if (p.teamId == myTeamId) glColor4f(0.2f, 0.8f, 1.0f, 1.0f);
-                else glColor4f(1.0f, 0.2f, 0.2f, 1.0f);
+                if (p.teamId == myTeamId)
+                    glColor4f(0.2f, 0.8f, 1.0f, 1.0f);
+                else
+                    glColor4f(1.0f, 0.2f, 0.2f, 1.0f);
 
                 float groundY = terrainHeightAt(p.x, p.y) + 0.5f;
                 glVertex3f(p.x, groundY, p.y);
@@ -861,7 +995,8 @@ public class GameRenderer {
     }
 
     private void renderBuildPreview(Building.Type selectedBuildType) {
-        if (selectedBuildType == null) return;
+        if (selectedBuildType == null)
+            return;
         double[] x = new double[1];
         double[] y = new double[1];
         glfwGetCursorPos(window, x, y);
@@ -871,7 +1006,8 @@ public class GameRenderer {
         glPushMatrix();
         glTranslatef(gx, terrainHeightAt(gx, gz) + 1.0f, gz);
         glColor4f(1, 1, 1, 0.5f);
-        float s = (selectedBuildType == Building.Type.FACTORY) ? 1.5f : (selectedBuildType == Building.Type.LASER_TOWER ? 0.9f : 0.5f);
+        float s = (selectedBuildType == Building.Type.FACTORY) ? 1.5f
+                : (selectedBuildType == Building.Type.LASER_TOWER ? 0.9f : 0.5f);
         glBegin(GL_LINE_LOOP);
         glVertex3f(-s, 0, -s);
         glVertex3f(s, 0, -s);
@@ -902,11 +1038,37 @@ public class GameRenderer {
         glDisable(GL_DEPTH_TEST);
         glLineWidth(2.0f);
         for (Unit u : gameState.units.values()) {
-            if (!selectedUnitIds.contains(u.id)) continue;
+            if (!selectedUnitIds.contains(u.id))
+                continue;
+
+            // 建造タスク（キュー）がある場合のマルチポイント描画
+            if (u.type == Unit.Type.CONSTRUCTOR && u.tasks != null && !u.tasks.isEmpty()) {
+                synchronized (u.tasks) {
+                    if (!u.tasks.isEmpty()) {
+                        glColor4f(0.3f, 0.8f, 1.0f, 0.75f);
+                        glBegin(GL_LINE_STRIP);
+                        float curY = terrainHeightAt(u.position.x, u.position.y) + 0.2f;
+                        glVertex3f(u.position.x, curY, u.position.y);
+                        for (Network.Task task : u.tasks) {
+                            float ty = terrainHeightAt(task.x, task.y) + 0.2f;
+                            glVertex3f(task.x, ty, task.y);
+                        }
+                        glEnd();
+                        for (Network.Task task : u.tasks) {
+                            float ty = terrainHeightAt(task.x, task.y) + 0.2f;
+                            renderPathArrow(task.x, ty, task.y);
+                        }
+                        continue;
+                    }
+                }
+            }
+
             Vector2f target = localUnitTargets.get(u.id);
-            if (target == null) continue;
+            if (target == null)
+                continue;
             float targetDist = u.position.distance(target);
-            if (targetDist < 0.75f) continue;
+            if (targetDist < 0.75f)
+                continue;
             float startY = terrainHeightAt(u.position.x, u.position.y) + 0.18f;
             float endY = terrainHeightAt(target.x, target.y) + 0.18f;
             glColor4f(0.25f, 0.95f, 0.45f, 0.65f);
@@ -959,15 +1121,18 @@ public class GameRenderer {
     private Vector3f getUnitGuideTarget(Unit u) {
         if (u.targetUnitId != null) {
             Unit target = gameState.units.get(u.targetUnitId);
-            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+            if (target != null)
+                return new Vector3f(target.position.x, 0, target.position.y);
         }
         if (u.attackTargetBuildingId != null) {
             Building target = gameState.buildings.get(u.attackTargetBuildingId);
-            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+            if (target != null)
+                return new Vector3f(target.position.x, 0, target.position.y);
         }
         if (u.targetBuildingId != null) {
             Building target = gameState.buildings.get(u.targetBuildingId);
-            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+            if (target != null)
+                return new Vector3f(target.position.x, 0, target.position.y);
         }
         if (u.targetPosition.distanceSquared(u.position) > 0.5f) {
             return new Vector3f(u.targetPosition.x, 0, u.targetPosition.y);
@@ -992,14 +1157,18 @@ public class GameRenderer {
         glDisable(GL_DEPTH_TEST);
         glLineWidth(1.8f);
         for (Unit u : gameState.units.values()) {
-            if (u.teamId != myTeamId) continue;
-            if (!selectedUnitIds.contains(u.id) || u.attackRange <= 0.0f) continue;
+            if (u.teamId != myTeamId)
+                continue;
+            if (!selectedUnitIds.contains(u.id) || u.attackRange <= 0.0f)
+                continue;
             float y = terrainHeightAt(u.position.x, u.position.y) + 0.08f;
             renderRangeCircle(u.position.x, y, u.position.y, u.attackRange, 0.2f, 0.9f, 1.0f, 0.35f);
         }
         for (Building b : gameState.buildings.values()) {
-            if (b.teamId != myTeamId) continue;
-            if (!selectedBuildingIds.contains(b.id) || b.attackDamage <= 0.0f || b.attackRange <= 0.0f) continue;
+            if (b.teamId != myTeamId)
+                continue;
+            if (!selectedBuildingIds.contains(b.id) || b.attackDamage <= 0.0f || b.attackRange <= 0.0f)
+                continue;
             float y = terrainHeightAt(b.position.x, b.position.y) + 0.08f;
             renderRangeCircle(b.position.x, y, b.position.y, b.attackRange, 1.0f, 0.9f, 0.2f, 0.32f);
         }
@@ -1020,7 +1189,8 @@ public class GameRenderer {
     }
 
     private void renderSelectionBox(boolean isSelecting, double selectionStartX, double selectionStartY) {
-        if (!isSelecting) return;
+        if (!isSelecting)
+            return;
         double[] x = new double[1];
         double[] y = new double[1];
         glfwGetCursorPos(window, x, y);
@@ -1037,6 +1207,7 @@ public class GameRenderer {
         float size = 150;
         float x = windowWidth - size - 20;
         float y = 20;
+        // ... (existing code for background and border)
         glColor4f(0, 0, 0, 0.7f);
         glBegin(GL_QUADS);
         glVertex2f(x, y);
@@ -1054,9 +1225,12 @@ public class GameRenderer {
         glEnd();
         synchronized (gameState) {
             for (Building b : gameState.buildings.values()) {
-                if (b.type == Building.Type.METAL_PATCH) glColor3f(1, 0.5f, 0);
-                else if (b.teamId == myTeamId) glColor3f(0, 0.5f, 1);
-                else glColor3f(1, 0, 0);
+                if (b.type == Building.Type.METAL_PATCH)
+                    glColor3f(1, 0.5f, 0);
+                else if (b.teamId == myTeamId)
+                    glColor3f(0, 0.5f, 1);
+                else
+                    glColor3f(1, 0, 0);
                 float px = x + (b.position.x / MapSettings.WORLD_SIZE) * size;
                 float py = y + (b.position.y / MapSettings.WORLD_SIZE) * size;
                 glBegin(GL_QUADS);
@@ -1067,8 +1241,10 @@ public class GameRenderer {
                 glEnd();
             }
             for (Unit u : gameState.units.values()) {
-                if (u.teamId == myTeamId) glColor3f(0, 1, 0);
-                else glColor3f(1, 0, 0);
+                if (u.teamId == myTeamId)
+                    glColor3f(0, 1, 0);
+                else
+                    glColor3f(1, 0, 0);
                 float px = x + (u.position.x / MapSettings.WORLD_SIZE) * size;
                 float py = y + (u.position.y / MapSettings.WORLD_SIZE) * size;
                 glPointSize(2);
@@ -1088,12 +1264,6 @@ public class GameRenderer {
                 glVertex2f(px - 3, py + 3);
                 glVertex2f(px + 3, py + 3);
                 glEnd();
-                glBegin(GL_LINES);
-                glVertex2f(px - 4, py - 4);
-                glVertex2f(px + 4, py + 4);
-                glVertex2f(px - 4, py + 4);
-                glVertex2f(px + 4, py - 4);
-                glEnd();
             }
         }
         glColor3f(1, 1, 1);
@@ -1107,6 +1277,31 @@ public class GameRenderer {
         glVertex2f(vx + vw, vy + vw);
         glVertex2f(vx, vy + vw);
         glEnd();
+
+        renderPlayerList(x, y + size + 10);
+    }
+
+    private void renderPlayerList(float x, float y) {
+        synchronized (gameState) {
+            if (gameState.teamNames.isEmpty())
+                return;
+            float currentY = y;
+            for (Map.Entry<Integer, String> entry : gameState.teamNames.entrySet()) {
+                int teamId = entry.getKey();
+                String name = entry.getValue();
+
+                // チームカラーの設定
+                if (teamId == currentRenderTeamId)
+                    glColor3f(0.2f, 0.8f, 1.0f); // Blue
+                else if (teamId == 2)
+                    glColor3f(1.0f, 0.2f, 0.2f); // Red
+                else
+                    glColor3f(0.8f, 0.8f, 0.8f);
+
+                drawText(name + " (Team " + teamId + ")", x, currentY + 15, 1.1f);
+                currentY += 20;
+            }
+        }
     }
 
     private void renderHUD(int myTeamId, Building.Type selectedBuildType) {
@@ -1131,7 +1326,8 @@ public class GameRenderer {
         glVertex2f(0, hudY + 3);
         glEnd();
         if (gameState.winnerTeamId != 0) {
-            drawText(gameState.winnerTeamId == myTeamId ? "VICTORY!" : "DEFEAT", windowWidth / 2 - 100, windowHeight / 2, 5.0f);
+            drawText(gameState.winnerTeamId == myTeamId ? "VICTORY!" : "DEFEAT", windowWidth / 2 - 100,
+                    windowHeight / 2, 5.0f);
             return;
         }
         if (!gameState.isStarted) {
@@ -1139,11 +1335,13 @@ public class GameRenderer {
             drawText("WAITING FOR START...", 250, hudY + 35, 1.5f);
             return;
         }
-        float met = gameState.teamMetal.getOrDefault(myTeamId, 0f);
-        float inc = gameState.teamIncome.getOrDefault(myTeamId, 0f);
-        float drn = gameState.teamDrain.getOrDefault(myTeamId, 0f);
-        if (met <= 0 && drn > inc) glColor3f(1, 0.2f, 0.2f);
-        else glColor3f(1, 1, 1);
+        float met = gameState.playerMetal.getOrDefault(currentRenderPlayerId, 0f);
+        float inc = gameState.playerIncome.getOrDefault(currentRenderPlayerId, 0f);
+        float drn = gameState.playerDrain.getOrDefault(currentRenderPlayerId, 0f);
+        if (met <= 0 && drn > inc)
+            glColor3f(1, 0.2f, 0.2f);
+        else
+            glColor3f(1, 1, 1);
         drawText(String.format("METAL: %d (+%.1f / -%.1f)", (int) met, inc, drn), 20, 20, 1.5f);
         boolean cS = false;
         synchronized (gameState) {
@@ -1171,27 +1369,43 @@ public class GameRenderer {
             boolean hoverWall = isInsideRect(mouseX, mouseY, 150, hudY + 10, 120, 60);
             boolean hoverExtractor = isInsideRect(mouseX, mouseY, 280, hudY + 10, 120, 60);
             boolean hoverLaser = isInsideRect(mouseX, mouseY, 410, hudY + 10, 120, 60);
-            renderActionCard(20, hudY + 10, 120, 60, "FACTORY", getBuildingCost(Building.Type.FACTORY), factoryIcon, selectedBuildType == Building.Type.FACTORY, hoverFactory, null);
-            renderActionCard(150, hudY + 10, 120, 60, "WALL", getBuildingCost(Building.Type.WALL), wallIcon, selectedBuildType == Building.Type.WALL, hoverWall, null);
-            renderActionCard(280, hudY + 10, 120, 60, "EXTRACT", getBuildingCost(Building.Type.EXTRACTOR), extractorIcon, selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor, null);
-            renderActionCard(410, hudY + 10, 120, 60, "LASER", getBuildingCost(Building.Type.LASER_TOWER), laserTowerIcon, selectedBuildType == Building.Type.LASER_TOWER, hoverLaser, null);
-            if (hoverFactory) tooltip = describeBuildingType(Building.Type.FACTORY);
-            else if (hoverWall) tooltip = describeBuildingType(Building.Type.WALL);
-            else if (hoverExtractor) tooltip = describeBuildingType(Building.Type.EXTRACTOR);
-            else if (hoverLaser) tooltip = describeBuildingType(Building.Type.LASER_TOWER);
+            renderActionCard(20, hudY + 10, 120, 60, "FACTORY", getBuildingCost(Building.Type.FACTORY), factoryIcon,
+                    selectedBuildType == Building.Type.FACTORY, hoverFactory, null);
+            renderActionCard(150, hudY + 10, 120, 60, "WALL", getBuildingCost(Building.Type.WALL), wallIcon,
+                    selectedBuildType == Building.Type.WALL, hoverWall, null);
+            renderActionCard(280, hudY + 10, 120, 60, "EXTRACT", getBuildingCost(Building.Type.EXTRACTOR),
+                    extractorIcon, selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor, null);
+            renderActionCard(410, hudY + 10, 120, 60, "LASER", getBuildingCost(Building.Type.LASER_TOWER),
+                    laserTowerIcon, selectedBuildType == Building.Type.LASER_TOWER, hoverLaser, null);
+            if (hoverFactory)
+                tooltip = describeBuildingType(Building.Type.FACTORY);
+            else if (hoverWall)
+                tooltip = describeBuildingType(Building.Type.WALL);
+            else if (hoverExtractor)
+                tooltip = describeBuildingType(Building.Type.EXTRACTOR);
+            else if (hoverLaser)
+                tooltip = describeBuildingType(Building.Type.LASER_TOWER);
         } else if (factory != null) {
             boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
             boolean hoverHound = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
             boolean hoverBot = isInsideRect(mouseX, mouseY, 340, hudY + 10, 150, 60);
             boolean hoverObelisk = isInsideRect(mouseX, mouseY, 500, hudY + 10, 150, 60);
-            renderActionCard(20, hudY + 10, 150, 60, "TANK", getUnitCost(Unit.Type.TANK), tankIcon, true, hoverTank, factory.productionQueue.isEmpty() ? null : "Q:" + factory.productionQueue.size());
-            renderActionCard(180, hudY + 10, 150, 60, "HOUND", getUnitCost(Unit.Type.HOUND), houndIcon, true, hoverHound, null);
-            renderActionCard(340, hudY + 10, 150, 60, "CONSTRUCTOR", getUnitCost(Unit.Type.CONSTRUCTOR), constructorIcon, true, hoverBot, null);
-            renderActionCard(500, hudY + 10, 150, 60, "OBELISK", getUnitCost(Unit.Type.OBELISK), obeliskIcon, true, hoverObelisk, null);
-            if (hoverTank) tooltip = describeUnitType(Unit.Type.TANK);
-            else if (hoverHound) tooltip = describeUnitType(Unit.Type.HOUND);
-            else if (hoverBot) tooltip = describeUnitType(Unit.Type.CONSTRUCTOR);
-            else if (hoverObelisk) tooltip = describeUnitType(Unit.Type.OBELISK);
+            renderActionCard(20, hudY + 10, 150, 60, "TANK", getUnitCost(Unit.Type.TANK), tankIcon, true, hoverTank,
+                    factory.productionQueue.isEmpty() ? null : "Q:" + factory.productionQueue.size());
+            renderActionCard(180, hudY + 10, 150, 60, "HOUND", getUnitCost(Unit.Type.HOUND), houndIcon, true,
+                    hoverHound, null);
+            renderActionCard(340, hudY + 10, 150, 60, "CONSTRUCTOR", getUnitCost(Unit.Type.CONSTRUCTOR),
+                    constructorIcon, true, hoverBot, null);
+            renderActionCard(500, hudY + 10, 150, 60, "OBELISK", getUnitCost(Unit.Type.OBELISK), obeliskIcon, true,
+                    hoverObelisk, null);
+            if (hoverTank)
+                tooltip = describeUnitType(Unit.Type.TANK);
+            else if (hoverHound)
+                tooltip = describeUnitType(Unit.Type.HOUND);
+            else if (hoverBot)
+                tooltip = describeUnitType(Unit.Type.CONSTRUCTOR);
+            else if (hoverObelisk)
+                tooltip = describeUnitType(Unit.Type.OBELISK);
         } else {
             drawText("SELECT ALLIES", 20, hudY + 35, 1.5f);
         }
@@ -1205,7 +1419,8 @@ public class GameRenderer {
         }
     }
 
-    private void renderActionCard(float x, float y, float width, float height, String label, int cost, Texture icon, boolean active, boolean hovered, String badgeText) {
+    private void renderActionCard(float x, float y, float width, float height, String label, int cost, Texture icon,
+            boolean active, boolean hovered, String badgeText) {
         glColor4f(0, 0, 0, 0.40f);
         glBegin(GL_QUADS);
         glVertex2f(x + 4, y + 5);
@@ -1213,9 +1428,12 @@ public class GameRenderer {
         glVertex2f(x + width + 4, y + height + 5);
         glVertex2f(x + 4, y + height + 5);
         glEnd();
-        if (active) glColor3f(0.16f, 0.58f, 0.26f);
-        else if (hovered) glColor3f(0.22f, 0.28f, 0.22f);
-        else glColor3f(0.14f, 0.18f, 0.14f);
+        if (active)
+            glColor3f(0.16f, 0.58f, 0.26f);
+        else if (hovered)
+            glColor3f(0.22f, 0.28f, 0.22f);
+        else
+            glColor3f(0.14f, 0.18f, 0.14f);
         glBegin(GL_QUADS);
         glVertex2f(x, y);
         glVertex2f(x + width, y);
@@ -1242,7 +1460,8 @@ public class GameRenderer {
         glVertex2f(x + width - 54, y + 25);
         glEnd();
         glColor3f(0.9f, 0.95f, 0.9f);
-        drawText(String.valueOf(cost), x + width - 44, y + 21, 1.05f);
+        // コストテキスト：さらに右（-40）かつ上（y + 24）へ
+        drawText(String.valueOf(cost), x + width - 40, y + 24.0f, 1.05f);
         if (badgeText != null && !badgeText.isEmpty()) {
             glColor4f(0.08f, 0.12f, 0.08f, 0.9f);
             glBegin(GL_QUADS);
@@ -1252,10 +1471,14 @@ public class GameRenderer {
             glVertex2f(x + width - 50, y + height - 3);
             glEnd();
             glColor3f(0.8f, 0.95f, 0.82f);
-            drawText(badgeText, x + width - 44, y + height - 5, 0.85f);
+            // バッジテキスト位置調整
+            drawText(badgeText, x + width - 40, y + height - 5.0f, 0.85f);
         }
         glColor3f(0.93f, 0.98f, 0.93f);
-        drawText(label, x + 58, y + 36, 1.25f);
+        // ラベルの見切れ対策：文字数が多い場合はスケールを落とす
+        float labelScale = label.length() > 8 ? 1.05f : 1.25f;
+        // ラベルテキスト：少し右（60）かつ上（y + 40）へ
+        drawText(label, x + 60, y + 40.0f, labelScale);
     }
 
     private void drawTexture(Texture texture, float x, float y, float width, float height) {
@@ -1266,10 +1489,14 @@ public class GameRenderer {
         glBindTexture(GL_TEXTURE_2D, texture.id());
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
         glBegin(GL_QUADS);
-        glTexCoord2f(0, 1); glVertex2f(x, y);
-        glTexCoord2f(1, 1); glVertex2f(x + width, y);
-        glTexCoord2f(1, 0); glVertex2f(x + width, y + height);
-        glTexCoord2f(0, 0); glVertex2f(x, y + height);
+        glTexCoord2f(0, 1);
+        glVertex2f(x, y);
+        glTexCoord2f(1, 1);
+        glVertex2f(x + width, y);
+        glTexCoord2f(1, 0);
+        glVertex2f(x + width, y + height);
+        glTexCoord2f(0, 0);
+        glVertex2f(x, y + height);
         glEnd();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
@@ -1314,7 +1541,8 @@ public class GameRenderer {
     }
 
     private float terrainHeightAt(float x, float z) {
-        return TerrainGenerator.heightAt(clamp(x, 0.0f, MapSettings.WORLD_SIZE), clamp(z, 0.0f, MapSettings.WORLD_SIZE));
+        return TerrainGenerator.heightAt(clamp(x, 0.0f, MapSettings.WORLD_SIZE),
+                clamp(z, 0.0f, MapSettings.WORLD_SIZE));
     }
 
     private float clamp(float value, float min, float max) {
@@ -1338,7 +1566,8 @@ public class GameRenderer {
         renderButton(x, y, width, height, label, active, false);
     }
 
-    private void renderButton(float x, float y, float width, float height, String label, boolean active, boolean hovered) {
+    private void renderButton(float x, float y, float width, float height, String label, boolean active,
+            boolean hovered) {
         glColor4f(0, 0, 0, 0.35f);
         glBegin(GL_QUADS);
         glVertex2f(x + 3, y + 4);
@@ -1346,9 +1575,12 @@ public class GameRenderer {
         glVertex2f(x + width + 3, y + height + 4);
         glVertex2f(x + 3, y + height + 4);
         glEnd();
-        if (active) glColor3f(0.16f, 0.58f, 0.26f);
-        else if (hovered) glColor3f(0.22f, 0.28f, 0.22f);
-        else glColor3f(0.18f, 0.2f, 0.18f);
+        if (active)
+            glColor3f(0.16f, 0.58f, 0.26f);
+        else if (hovered)
+            glColor3f(0.22f, 0.28f, 0.22f);
+        else
+            glColor3f(0.18f, 0.2f, 0.18f);
         glBegin(GL_QUADS);
         glVertex2f(x, y);
         glVertex2f(x + width, y);
@@ -1478,7 +1710,8 @@ public class GameRenderer {
             for (Unit u : gameState.units.values()) {
                 float groundY = terrainHeightAt(u.position.x, u.position.y) + 0.5f;
                 Vector3f screen = projectWorldToScreen(u.position.x, groundY, u.position.y);
-                if (screen.z < 0.0f || screen.z > 1.0f) continue;
+                if (screen.z < 0.0f || screen.z > 1.0f)
+                    continue;
                 float dist = screenDistance(mouseX, mouseY, screen.x, screen.y);
                 float threshold = 18.0f + u.radius * 10.0f;
                 if (dist <= threshold && dist < bestDist) {
@@ -1489,7 +1722,8 @@ public class GameRenderer {
             for (Building b : gameState.buildings.values()) {
                 float groundY = terrainHeightAt(b.position.x, b.position.y) + b.size / 2.0f;
                 Vector3f screen = projectWorldToScreen(b.position.x, groundY, b.position.y);
-                if (screen.z < 0.0f || screen.z > 1.0f) continue;
+                if (screen.z < 0.0f || screen.z > 1.0f)
+                    continue;
                 float dist = screenDistance(mouseX, mouseY, screen.x, screen.y);
                 float threshold = 22.0f + b.size * 6.0f;
                 if (dist <= threshold && dist < bestDist) {
@@ -1571,6 +1805,9 @@ public class GameRenderer {
     }
 
     private void drawText(String text, float x, float y, float scale) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
         ByteBuffer buffer = BufferUtils.createByteBuffer(text.length() * 270);
         int vertices = STBEasyFont.stb_easy_font_print(0, 0, text, null, buffer);
         glPushMatrix();

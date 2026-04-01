@@ -12,7 +12,6 @@ import com.lunar_prototype.iron_horizon.common.model.Unit;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFWErrorCallback;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,12 +20,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.lunar_prototype.iron_horizon.client.util.ConfigManager;
+
 import static org.lwjgl.glfw.Callbacks.glfwFreeCallbacks;
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
 public class ClientLauncher {
     private enum LoadingPhase {
+        INITIAL_SETUP,
         LOAD_ASSETS,
         CONNECT_SERVER,
         READY
@@ -47,6 +49,7 @@ public class ClientLauncher {
     private GameRenderer renderer;
 
     private int myTeamId = 0;
+    private int myPlayerId = 0;
     private boolean gameStartedPreviously = false;
     private int winnerPreviously = 0;
     private boolean isMenuOpen = false;
@@ -56,7 +59,12 @@ public class ClientLauncher {
     private boolean isSelecting = false;
     private boolean isPathDrawing = false;
     private boolean pathQueueMode = false;
-    private LoadingPhase loadingPhase = LoadingPhase.LOAD_ASSETS;
+    private LoadingPhase loadingPhase = LoadingPhase.INITIAL_SETUP;
+    private final ConfigManager configManager = new ConfigManager();
+    private String inputServerIp = "";
+    private String inputUsername = "";
+    private int activeField = 0; // 0: IP, 1: Username
+    private boolean isConnecting = false;
     private double selectionStartX;
     private double selectionStartY;
     private double pathStartX;
@@ -103,12 +111,24 @@ public class ClientLauncher {
                 projectileData,
                 localUnitTargets);
 
+        inputServerIp = configManager.getServerIp();
+        inputUsername = configManager.getUsername();
+        loadingPhase = LoadingPhase.INITIAL_SETUP;
+
         glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
+            double[] x = new double[1], y = new double[1];
+            glfwGetCursorPos(w, x, y);
+
+            if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
+                if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                    checkInitialSetupClick(x[0], y[0]);
+                }
+                return;
+            }
+
             if (loadingPhase != LoadingPhase.READY) {
                 return;
             }
-            double[] x = new double[1], y = new double[1];
-            glfwGetCursorPos(w, x, y);
             if (isMenuOpen) {
                 if (action == GLFW_PRESS) checkMenuClick(x[0], y[0]);
                 return;
@@ -146,6 +166,25 @@ public class ClientLauncher {
         });
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
+            if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
+                if (action == GLFW_PRESS) {
+                    if (key == GLFW_KEY_ESCAPE) {
+                        glfwSetWindowShouldClose(window, true);
+                    } else if (key == GLFW_KEY_TAB) {
+                        activeField = (activeField + 1) % 2;
+                    } else if (key == GLFW_KEY_ENTER) {
+                        startConnectionPhase();
+                    } else if (key == GLFW_KEY_BACKSPACE) {
+                        if (activeField == 0 && !inputServerIp.isEmpty()) {
+                            inputServerIp = inputServerIp.substring(0, inputServerIp.length() - 1);
+                        } else if (activeField == 1 && !inputUsername.isEmpty()) {
+                            inputUsername = inputUsername.substring(0, inputUsername.length() - 1);
+                        }
+                    }
+                }
+                return;
+            }
+
             if (loadingPhase != LoadingPhase.READY) {
                 return;
             }
@@ -168,6 +207,17 @@ public class ClientLauncher {
             }
         });
 
+        glfwSetCharCallback(window, (w, codepoint) -> {
+            if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
+                char c = (char) codepoint;
+                if (activeField == 0) {
+                    inputServerIp += c;
+                } else if (activeField == 1) {
+                    inputUsername += c;
+                }
+            }
+        });
+
         glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
             if (loadingPhase != LoadingPhase.READY) {
                 return;
@@ -185,6 +235,40 @@ public class ClientLauncher {
         });
         glfwShowWindow(window);
         renderer.prepareCore();
+    }
+
+    private void checkInitialSetupClick(double x, double y) {
+        int[] w = new int[1], h = new int[1];
+        glfwGetWindowSize(window, w, h);
+        float pW = 500.0f;
+        float pH = 400.0f;
+        float px = (w[0] - pW) * 0.5f;
+        float py = (h[0] - pH) * 0.5f;
+
+        // IP Field
+        if (x > px + 30 && x < px + pW - 30 && y > py + 120 && y < py + 160) {
+            activeField = 0;
+        }
+        // Username Field
+        else if (x > px + 30 && x < px + pW - 30 && y > py + 210 && y < py + 250) {
+            activeField = 1;
+        }
+        // Connect Button
+        else if (x > px + 30 && x < px + 240 && y > py + 280 && y < py + 330) {
+            startConnectionPhase();
+        }
+        // Local Button
+        else if (x > px + 260 && x < px + 470 && y > py + 280 && y < py + 330) {
+            inputServerIp = "localhost";
+            startConnectionPhase();
+        }
+    }
+
+    private void startConnectionPhase() {
+        if (inputServerIp.isEmpty() || inputUsername.isEmpty()) return;
+        configManager.setServerIp(inputServerIp);
+        configManager.setUsername(inputUsername);
+        configManager.save();
         loadingPhase = LoadingPhase.LOAD_ASSETS;
     }
 
@@ -201,7 +285,9 @@ public class ClientLauncher {
     }
 
     private void renderLoadingFrame() {
-        if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
+        if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
+            renderer.renderInitialSetupScreen(inputServerIp, inputUsername, activeField, isConnecting);
+        } else if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
             renderer.renderLoadingScreen(
                     "Preparing battlefield",
                     "Generating command cards and loading terrain data.",
@@ -225,13 +311,22 @@ public class ClientLauncher {
         client.addListener(new Listener() {
             public void received(Connection connection, Object object) {
                 if (object instanceof Network.LoginResponse) {
-                    myTeamId = ((Network.LoginResponse) object).teamId;
+                    Network.LoginResponse resp = (Network.LoginResponse) object;
+                    myTeamId = resp.teamId;
+                    // Note: In KryoNet, connection ID on client side for the server is often not directly in the message 
+                    // but we can assume the server might send it or we use the local connection ID.
+                    // For simplicity, we'll let the server tell us in a future update or use the response's side effect.
+                    // Actually, let's just use the connection ID if available.
+                    myPlayerId = connection.getID(); 
+                    renderer.setPlayerContext(myTeamId, myPlayerId);
                 } else if (object instanceof Network.StateUpdate) {
                     Network.StateUpdate update = (Network.StateUpdate) object;
                     synchronized (gameState) {
-                        gameState.teamMetal.putAll(update.teamMetal);
-                        gameState.teamIncome.putAll(update.teamIncome);
-                        gameState.teamDrain.putAll(update.teamDrain);
+                        gameState.playerMetal.clear(); gameState.playerMetal.putAll(update.playerMetal);
+                        gameState.playerIncome.clear(); gameState.playerIncome.putAll(update.playerIncome);
+                        gameState.playerDrain.clear(); gameState.playerDrain.putAll(update.playerDrain);
+                        gameState.teamNames.clear();
+                        gameState.teamNames.putAll(update.teamNames);
                         if (update.isStarted && !gameStartedPreviously) {
                             soundManager.playSound("start");
                             gameStartedPreviously = true;
@@ -249,27 +344,51 @@ public class ClientLauncher {
                         for (Building existing : gameState.buildings.values()) {
                             previousCompletion.put(existing.id, existing.isComplete);
                         }
-                        gameState.units.clear();
+                        if (update.isFullUpdate) {
+                            gameState.units.clear();
+                            gameState.buildings.clear();
+                        }
+                        
+                        // ユニットの更新・削除
+                        for (Integer id : update.removedUnitIds) gameState.units.remove(id);
                         for (Network.UnitData data : update.units) {
-                            Unit unit = new Unit(data.id, data.x, data.y);
+                            Unit unit = gameState.units.get(data.id);
+                            if (unit == null) {
+                                unit = new Unit(data.id, data.x, data.y);
+                                gameState.addUnit(unit);
+                            }
+                            unit.position.set(data.x, data.y);
                             unit.type = data.type;
                             unit.teamId = data.teamId;
+                            unit.ownerId = data.ownerId;
                             unit.hp = data.hp;
                             unit.maxHp = data.maxHp;
                             unit.facingDeg = data.facingDeg;
-                            gameState.addUnit(unit);
+                            synchronized (unit.tasks) {
+                                unit.tasks.clear();
+                                unit.tasks.addAll(data.tasks);
+                            }
                         }
-                        gameState.buildings.clear();
+
+                        // 建造物の更新・削除
+                        for (Integer id : update.removedBuildingIds) gameState.buildings.remove(id);
                         for (Network.BuildingData bData : update.buildings) {
-                            Building building = new Building(bData.id, bData.type, bData.x, bData.y, bData.teamId);
+                            Building building = gameState.buildings.get(bData.id);
+                            boolean wasJustCompleted = false;
+                            if (building == null) {
+                                building = new Building(bData.id, bData.type, bData.x, bData.y, bData.teamId, bData.ownerId);
+                                gameState.addBuilding(building);
+                            }
                             building.hp = bData.hp;
                             building.maxHp = bData.maxHp;
                             building.buildProgress = bData.buildProgress;
+                            if (!building.isComplete && bData.isComplete) wasJustCompleted = true;
                             building.isComplete = bData.isComplete;
                             building.productionTimer = bData.productionProgress;
+                            building.productionQueue.clear();
                             building.productionQueue.addAll(bData.productionQueue);
-                            gameState.addBuilding(building);
-                            if (Boolean.FALSE.equals(previousCompletion.get(bData.id)) && building.isComplete) {
+                            
+                            if (wasJustCompleted) {
                                 synchronized (effects) {
                                     effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.BUILD_COMPLETE, building.position.x, building.position.y, 0, 0));
                                 }
@@ -304,12 +423,14 @@ public class ClientLauncher {
         });
         client.start();
         try {
-            client.connect(5000, "localhost", Network.TCP_PORT, Network.UDP_PORT);
+            client.connect(5000, inputServerIp, Network.TCP_PORT, Network.UDP_PORT);
             Network.LoginRequest req = new Network.LoginRequest();
-            req.username = "Player1";
+            req.username = inputUsername;
             client.sendTCP(req);
         } catch (IOException e) {
             e.printStackTrace();
+            // 接続失敗時はセットアップに戻す
+            loadingPhase = LoadingPhase.INITIAL_SETUP;
         }
     }
 
