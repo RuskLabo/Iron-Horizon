@@ -15,8 +15,10 @@ import org.lwjgl.glfw.GLFWErrorCallback;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.lwjgl.glfw.Callbacks.glfwFreeCallbacks;
@@ -31,6 +33,7 @@ public class ClientLauncher {
     private final Set<Integer> selectedUnitIds = new HashSet<>();
     private final Set<Integer> selectedBuildingIds = new HashSet<>();
     private final List<GameRenderer.MoveMarker> moveMarkers = new ArrayList<>();
+    private final List<GameRenderer.CombatMarker> combatMarkers = new ArrayList<>();
     private final List<GameRenderer.Effect> effects = new ArrayList<>();
     private final List<Network.ProjectileData> projectileData = new ArrayList<>();
     private GameRenderer renderer;
@@ -39,6 +42,7 @@ public class ClientLauncher {
     private boolean gameStartedPreviously = false;
     private int winnerPreviously = 0;
     private boolean isMenuOpen = false;
+    private boolean debugOverlayEnabled = false;
     private Building.Type selectedBuildType = null;
     private boolean isSelecting = false;
     private double selectionStartX;
@@ -77,6 +81,7 @@ public class ClientLauncher {
                 selectedUnitIds,
                 selectedBuildingIds,
                 moveMarkers,
+                combatMarkers,
                 effects,
                 projectileData);
 
@@ -112,6 +117,11 @@ public class ClientLauncher {
         });
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
+            if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
+                debugOverlayEnabled = !debugOverlayEnabled;
+                renderer.setDebugOverlayEnabled(debugOverlayEnabled);
+                return;
+            }
             if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
                 if (selectedBuildType != null || !selectedUnitIds.isEmpty() || !selectedBuildingIds.isEmpty()) {
                     selectedUnitIds.clear();
@@ -153,6 +163,10 @@ public class ClientLauncher {
                         int oldTanks = (int) gameState.units.values().stream().filter(u -> u.teamId == myTeamId && u.type == Unit.Type.TANK).count();
                         int newTanks = (int) update.units.stream().filter(u -> u.teamId == myTeamId && u.type == Unit.Type.TANK).count();
                         if (newTanks > oldTanks) soundManager.playSound("ready");
+                        Map<Integer, Boolean> previousCompletion = new HashMap<>();
+                        for (Building existing : gameState.buildings.values()) {
+                            previousCompletion.put(existing.id, existing.isComplete);
+                        }
                         gameState.units.clear();
                         for (Network.UnitData data : update.units) {
                             Unit unit = new Unit(data.id, data.x, data.y);
@@ -172,6 +186,11 @@ public class ClientLauncher {
                             building.productionTimer = bData.productionProgress;
                             building.productionQueue.addAll(bData.productionQueue);
                             gameState.addBuilding(building);
+                            if (Boolean.FALSE.equals(previousCompletion.get(bData.id)) && building.isComplete) {
+                                synchronized (effects) {
+                                    effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.BUILD_COMPLETE, building.position.x, building.position.y, 0, 0));
+                                }
+                            }
                         }
                         synchronized (projectileData) {
                             projectileData.clear();
@@ -192,6 +211,7 @@ public class ClientLauncher {
                             } else if (e.type == Network.CombatEvent.Type.EXPLOSION) {
                                 effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.EXPLOSION, e.x, e.y, 0, 0));
                             }
+                            combatMarkers.add(new GameRenderer.CombatMarker(e.x, e.y));
                         }
                     }
                 }
@@ -326,30 +346,65 @@ public class ClientLauncher {
     }
 
     private void finishSelection(double endX, double endY) {
-        Vector3f sW = renderer.getMouseWorldPos(selectionStartX, selectionStartY);
-        Vector3f eW = renderer.getMouseWorldPos(endX, endY);
-        float minX = Math.min(sW.x, eW.x);
-        float maxX = Math.max(sW.x, eW.x);
-        float minZ = Math.min(sW.z, eW.z);
-        float maxZ = Math.max(sW.z, eW.z);
+        double minX = Math.min(selectionStartX, endX);
+        double maxX = Math.max(selectionStartX, endX);
+        double minY = Math.min(selectionStartY, endY);
+        double maxY = Math.max(selectionStartY, endY);
+        boolean tinyDrag = Math.abs(maxX - minX) < 6.0 && Math.abs(maxY - minY) < 6.0;
         boolean anySelected = false;
         selectedUnitIds.clear();
         selectedBuildingIds.clear();
         synchronized (gameState) {
             for (Unit u : gameState.units.values()) {
-                if (u.teamId == myTeamId && u.position.x >= minX && u.position.x <= maxX && u.position.y >= minZ && u.position.y <= maxZ) {
+                if (u.teamId != myTeamId) continue;
+                float groundY = renderer.getTerrainHeightAt(u.position.x, u.position.y) + 0.5f;
+                Vector3f screen = renderer.projectWorldToScreen(u.position.x, groundY, u.position.y);
+                if (screen.z < 0.0f || screen.z > 1.0f) continue;
+                if (isInsideSelection(screen.x, screen.y, minX, maxX, minY, maxY, tinyDrag, 16.0f)) {
                     selectedUnitIds.add(u.id);
                     anySelected = true;
                 }
             }
             for (Building b : gameState.buildings.values()) {
-                if (b.teamId == myTeamId && b.position.x >= minX && b.position.x <= maxX && b.position.y >= minZ && b.position.y <= maxZ) {
+                if (b.teamId != myTeamId) continue;
+                if (isBuildingInsideSelection(b, minX, maxX, minY, maxY, tinyDrag)) {
                     selectedBuildingIds.add(b.id);
                     anySelected = true;
                 }
             }
         }
         if (anySelected) soundManager.playSound("selected");
+    }
+
+    private boolean isInsideSelection(float x, float y, double minX, double maxX, double minY, double maxY, boolean tinyDrag, float padding) {
+        if (tinyDrag) {
+            double centerX = (minX + maxX) * 0.5;
+            double centerY = (minY + maxY) * 0.5;
+            return Math.abs(x - centerX) <= padding && Math.abs(y - centerY) <= padding;
+        }
+        return x >= minX - padding && x <= maxX + padding && y >= minY - padding && y <= maxY + padding;
+    }
+
+    private boolean isBuildingInsideSelection(Building building, double minX, double maxX, double minY, double maxY, boolean tinyDrag) {
+        float baseY = renderer.getTerrainHeightAt(building.position.x, building.position.y);
+        float topY = baseY + building.size / 2.0f;
+        float half = Math.max(0.6f, building.size / 2.0f);
+        float[][] points = new float[][] {
+                {building.position.x, topY, building.position.y},
+                {building.position.x - half, topY, building.position.y - half},
+                {building.position.x + half, topY, building.position.y - half},
+                {building.position.x + half, topY, building.position.y + half},
+                {building.position.x - half, topY, building.position.y + half}
+        };
+        float padding = tinyDrag ? 18.0f : 10.0f;
+        for (float[] p : points) {
+            Vector3f screen = renderer.projectWorldToScreen(p[0], p[1], p[2]);
+            if (screen.z < 0.0f || screen.z > 1.0f) continue;
+            if (isInsideSelection(screen.x, screen.y, minX, maxX, minY, maxY, tinyDrag, padding)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void sendMoveCommand(double x, double y) {
@@ -397,6 +452,8 @@ public class ClientLauncher {
         while (!glfwWindowShouldClose(window)) {
             long now = System.currentTimeMillis();
             float dt = (now - lastTime) / 1000.0f;
+            float frameTimeMs = (float) (now - lastTime);
+            float fps = dt > 0.0f ? 1.0f / dt : 0.0f;
             lastTime = now;
             if (!isMenuOpen) {
                 handleInput(dt);
@@ -407,8 +464,11 @@ public class ClientLauncher {
                 synchronized (effects) {
                     effects.removeIf(e -> (e.life -= dt * 3.0f) <= 0);
                 }
+                synchronized (combatMarkers) {
+                    combatMarkers.removeIf(m -> (m.life -= dt * 1.5f) <= 0);
+                }
             }
-            renderer.renderFrame(myTeamId, isSelecting, selectionStartX, selectionStartY, selectedBuildType, isMenuOpen);
+            renderer.renderFrame(myTeamId, isSelecting, selectionStartX, selectionStartY, selectedBuildType, isMenuOpen, fps, frameTimeMs);
             glfwSwapBuffers(window);
             glfwPollEvents();
         }

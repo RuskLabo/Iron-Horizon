@@ -297,7 +297,7 @@ public class ServerLauncher {
                 continue;
             }
             if (u.attackCooldown > 0) u.attackCooldown -= dt;
-            if (u.type == Unit.Type.TANK && u.targetUnitId == null && u.attackTargetBuildingId == null && !u.manualMoveOrder) {
+            if (u.type == Unit.Type.TANK && u.targetUnitId == null && u.attackTargetBuildingId == null) {
                 for (Unit enemy : gameState.units.values()) { if (enemy.teamId != u.teamId && enemy.position.distance(u.position) < u.attackRange) { u.targetUnitId = enemy.id; break; } }
             }
             if (u.targetUnitId != null) {
@@ -305,8 +305,13 @@ public class ServerLauncher {
                 if (t == null || t.hp <= 0) u.targetUnitId = null;
                 else {
                     float dist = u.position.distance(t.position);
-                    if (dist > u.attackRange) u.targetPosition.set(t.position);
-                    else { u.targetPosition.set(u.position); if (u.attackCooldown <= 0) { spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId); u.attackCooldown = 1.0f; } }
+                    if (dist > u.attackRange) {
+                        if (u.manualMoveOrder) u.targetUnitId = null;
+                        else u.targetPosition.set(t.position);
+                    } else {
+                        if (!u.manualMoveOrder) u.targetPosition.set(u.position);
+                        if (u.attackCooldown <= 0) { spawnProjectile(u.position.x, u.position.y, t.position.x, t.position.y, u.attackDamage, u.teamId); u.attackCooldown = 1.0f; }
+                    }
                 }
             } else if (u.attackTargetBuildingId != null) {
                 Building t = gameState.buildings.get(u.attackTargetBuildingId);

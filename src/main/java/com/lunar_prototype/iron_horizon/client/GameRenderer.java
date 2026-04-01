@@ -17,11 +17,13 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.stb.STBEasyFont;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
+import static org.lwjgl.opengl.GL11.glGetString;
 
 public class GameRenderer {
     public static class MoveMarker {
@@ -33,8 +35,17 @@ public class GameRenderer {
         }
     }
 
+    public static class CombatMarker {
+        public float x, z, life = 1.0f;
+
+        public CombatMarker(float x, float z) {
+            this.x = x;
+            this.z = z;
+        }
+    }
+
     public static class Effect {
-        public enum Type { LASER, EXPLOSION }
+        public enum Type { LASER, EXPLOSION, BUILD_COMPLETE }
 
         public Type type;
         public float x, y, tx, ty, life = 1.0f;
@@ -56,6 +67,7 @@ public class GameRenderer {
     private final Set<Integer> selectedUnitIds;
     private final Set<Integer> selectedBuildingIds;
     private final List<MoveMarker> moveMarkers;
+    private final List<CombatMarker> combatMarkers;
     private final List<Effect> effects;
     private final List<Network.ProjectileData> projectileData;
     private Mesh cubeMesh;
@@ -72,6 +84,11 @@ public class GameRenderer {
     private int windowHeight = 720;
     private int framebufferWidth = 1280;
     private int framebufferHeight = 720;
+    private int currentRenderTeamId = 0;
+    private boolean debugOverlayEnabled = false;
+    private String glVersion = "";
+    private String glRenderer = "";
+    private String glVendor = "";
 
     public GameRenderer(
             long window,
@@ -80,6 +97,7 @@ public class GameRenderer {
             Set<Integer> selectedUnitIds,
             Set<Integer> selectedBuildingIds,
             List<MoveMarker> moveMarkers,
+            List<CombatMarker> combatMarkers,
             List<Effect> effects,
             List<Network.ProjectileData> projectileData) {
         this.window = window;
@@ -88,12 +106,16 @@ public class GameRenderer {
         this.selectedUnitIds = selectedUnitIds;
         this.selectedBuildingIds = selectedBuildingIds;
         this.moveMarkers = moveMarkers;
+        this.combatMarkers = combatMarkers;
         this.effects = effects;
         this.projectileData = projectileData;
     }
 
     public void init() {
         GL.createCapabilities();
+        glVersion = safeGlString(GL_VERSION);
+        glRenderer = safeGlString(GL_RENDERER);
+        glVendor = safeGlString(GL_VENDOR);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -130,22 +152,36 @@ public class GameRenderer {
 
     public void handleKeyboardInput(float dt) {
         float speed = 50.0f * dt;
-        float radians = (float) Math.toRadians(yaw + 90);
+        float yawRad = (float) Math.toRadians(yaw + 90.0f);
+        float forwardX = (float) -Math.sin(yawRad);
+        float forwardZ = (float) -Math.cos(yawRad);
+        float rightX = (float) Math.cos(yawRad);
+        float rightZ = (float) -Math.sin(yawRad);
+        float moveX = 0.0f;
+        float moveZ = 0.0f;
+
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            cameraPos.x -= Math.sin(radians) * speed;
-            cameraPos.z -= Math.cos(radians) * speed;
+            moveX += forwardX;
+            moveZ += forwardZ;
         }
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            cameraPos.x += Math.sin(radians) * speed;
-            cameraPos.z += Math.cos(radians) * speed;
+            moveX -= forwardX;
+            moveZ -= forwardZ;
         }
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            cameraPos.x += Math.sin(radians - Math.PI / 2) * speed;
-            cameraPos.z += Math.cos(radians - Math.PI / 2) * speed;
+            moveX -= rightX;
+            moveZ -= rightZ;
         }
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            cameraPos.x -= Math.sin(radians - Math.PI / 2) * speed;
-            cameraPos.z -= Math.cos(radians - Math.PI / 2) * speed;
+            moveX += rightX;
+            moveZ += rightZ;
+        }
+        float length = (float) Math.sqrt(moveX * moveX + moveZ * moveZ);
+        if (length > 0.0f) {
+            moveX /= length;
+            moveZ /= length;
+            cameraPos.x += moveX * speed;
+            cameraPos.z += moveZ * speed;
         }
         cameraPos.x = Math.max(0.0f, Math.min(MapSettings.WORLD_SIZE, cameraPos.x));
         cameraPos.z = Math.max(0.0f, Math.min(MapSettings.WORLD_SIZE, cameraPos.z));
@@ -173,22 +209,38 @@ public class GameRenderer {
     }
 
     public Vector3f getMouseWorldPos(double screenX, double screenY) {
-        Matrix4f vp = new Matrix4f()
-                .perspective((float) Math.toRadians(45.0f), (float) framebufferWidth / framebufferHeight, 0.1f, 1000.0f)
-                .rotate((float) Math.toRadians(pitch), 1, 0, 0)
-                .rotate((float) Math.toRadians(yaw + 90), 0, 1, 0)
-                .translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+        float fx = toFramebufferX(screenX);
+        float fy = toFramebufferY(screenY);
+        Matrix4f vp = buildViewProjection();
         Vector3f near = new Vector3f();
         Vector3f far = new Vector3f();
         int[] viewport = {0, 0, framebufferWidth, framebufferHeight};
-        vp.unproject((float) screenX, (float) framebufferHeight - (float) screenY, 0, viewport, near);
-        vp.unproject((float) screenX, (float) framebufferHeight - (float) screenY, 1, viewport, far);
+        vp.unproject(fx, (float) framebufferHeight - fy, 0, viewport, near);
+        vp.unproject(fx, (float) framebufferHeight - fy, 1, viewport, far);
         float t = -near.y / (far.y - near.y);
         return new Vector3f(near).lerp(far, t);
     }
 
+    public Vector3f projectWorldToScreen(float worldX, float worldY, float worldZ) {
+        Matrix4f vp = buildViewProjection();
+        Vector3f screen = new Vector3f(worldX, worldY, worldZ);
+        int[] viewport = {0, 0, framebufferWidth, framebufferHeight};
+        vp.project(screen, viewport, screen);
+        screen.x = toWindowX(screen.x);
+        screen.y = windowHeight - toWindowY(screen.y);
+        return screen;
+    }
+
+    public float getTerrainHeightAt(float x, float z) {
+        return terrainHeightAt(x, z);
+    }
+
     public Vector3f getCameraPosition() {
         return new Vector3f(cameraPos);
+    }
+
+    public void setDebugOverlayEnabled(boolean enabled) {
+        this.debugOverlayEnabled = enabled;
     }
 
     public void renderFrame(
@@ -197,11 +249,18 @@ public class GameRenderer {
             double selectionStartX,
             double selectionStartY,
             Building.Type selectedBuildType,
-            boolean isMenuOpen) {
+            boolean isMenuOpen,
+            float fps,
+            float frameTimeMs) {
+        currentRenderTeamId = myTeamId;
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderWorldPass(myTeamId, selectedBuildType);
         renderOverlayPass();
         renderUiPass(myTeamId, isSelecting, selectionStartX, selectionStartY, selectedBuildType, isMenuOpen);
+        if (debugOverlayEnabled) {
+            setup2D();
+            renderDebugOverlay(fps, frameTimeMs);
+        }
     }
 
     private void renderWorldPass(int myTeamId, Building.Type selectedBuildType) {
@@ -211,6 +270,7 @@ public class GameRenderer {
             renderBuildings(myTeamId);
             renderUnits(myTeamId);
             renderProjectiles(myTeamId);
+            renderSelectionRanges(myTeamId);
         }
         synchronized (moveMarkers) {
             renderMoveMarkers();
@@ -219,6 +279,8 @@ public class GameRenderer {
     }
 
     private void renderOverlayPass() {
+        renderSelectionRanges(currentRenderTeamId);
+        renderPathGuides();
         synchronized (effects) {
             renderEffects();
         }
@@ -240,6 +302,47 @@ public class GameRenderer {
         }
     }
 
+    private void renderDebugOverlay(float fps, float frameTimeMs) {
+        float x = 14.0f;
+        float y = 14.0f;
+        float width = 350.0f;
+        float height = 180.0f;
+        glColor4f(0.02f, 0.04f, 0.02f, 0.92f);
+        glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + width, y);
+        glVertex2f(x + width, y + height);
+        glVertex2f(x, y + height);
+        glEnd();
+        glColor4f(0.2f, 0.8f, 0.35f, 0.8f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(x, y);
+        glVertex2f(x + width, y);
+        glVertex2f(x + width, y + height);
+        glVertex2f(x, y + height);
+        glEnd();
+        drawText("IRON HORIZON DEBUG", x + 12, y + 22, 1.45f);
+        drawText(String.format("FPS: %.1f", fps), x + 12, y + 44, 1.35f);
+        drawText(String.format("Frame: %.2f ms", frameTimeMs), x + 12, y + 62, 1.35f);
+        drawText(String.format("Window: %d x %d", windowWidth, windowHeight), x + 12, y + 80, 1.2f);
+        drawText(String.format("Framebuffer: %d x %d", framebufferWidth, framebufferHeight), x + 12, y + 98, 1.2f);
+        drawText(String.format("Camera: %.1f, %.1f, %.1f", cameraPos.x, cameraPos.y, cameraPos.z), x + 12, y + 116, 1.2f);
+        drawText(String.format("Yaw/Pitch: %.1f / %.1f", yaw, pitch), x + 12, y + 134, 1.2f);
+        drawText(shortenLine("GL: " + glVersion), x + 12, y + 152, 1.1f);
+        drawText(shortenLine(glRenderer), x + 12, y + 168, 1.1f);
+    }
+
+    private String shortenLine(String text) {
+        if (text == null) return "";
+        if (text.length() <= 42) return text;
+        return text.substring(0, 39) + "...";
+    }
+
+    private String safeGlString(int which) {
+        String value = glGetString(which);
+        return value != null ? value : "unknown";
+    }
+
     private void setup3D() {
         glEnable(GL_DEPTH_TEST);
         glMatrixMode(GL_PROJECTION);
@@ -256,6 +359,34 @@ public class GameRenderer {
                 .translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
         view.get(buffer);
         glLoadMatrixf(buffer);
+    }
+
+    private Matrix4f buildViewProjection() {
+        return new Matrix4f()
+                .perspective((float) Math.toRadians(45.0f), (float) framebufferWidth / framebufferHeight, 0.1f, 1000.0f)
+                .rotate((float) Math.toRadians(pitch), 1, 0, 0)
+                .rotate((float) Math.toRadians(yaw + 90), 0, 1, 0)
+                .translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+    }
+
+    private float toFramebufferX(double windowX) {
+        if (windowWidth <= 0) return (float) windowX;
+        return (float) (windowX * framebufferWidth / (double) windowWidth);
+    }
+
+    private float toFramebufferY(double windowY) {
+        if (windowHeight <= 0) return (float) windowY;
+        return (float) (windowY * framebufferHeight / (double) windowHeight);
+    }
+
+    private float toWindowX(float framebufferX) {
+        if (framebufferWidth <= 0) return framebufferX;
+        return framebufferX * windowWidth / (float) framebufferWidth;
+    }
+
+    private float toWindowY(float framebufferY) {
+        if (framebufferHeight <= 0) return framebufferY;
+        return framebufferY * windowHeight / (float) framebufferHeight;
     }
 
     private void setup2D() {
@@ -379,6 +510,30 @@ public class GameRenderer {
                 glVertex3f(e.x, 0.5f, e.y);
                 glVertex3f(e.tx, 0.5f, e.ty);
                 glEnd();
+            } else if (e.type == Effect.Type.BUILD_COMPLETE) {
+                float radius = 1.5f + (1.0f - e.life) * 3.0f;
+                float baseY = terrainHeightAt(e.x, e.y) + 0.15f;
+                glPushMatrix();
+                glTranslatef(e.x, baseY, e.y);
+                glColor4f(0.4f, 1.0f, 0.55f, e.life);
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_LOOP);
+                for (int i = 0; i < 32; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 32.0);
+                    glVertex3f((float) Math.cos(angle) * radius, 0, (float) Math.sin(angle) * radius);
+                }
+                glEnd();
+                glBegin(GL_LINES);
+                glVertex3f(-radius * 0.4f, 0, 0);
+                glVertex3f(-radius, 0, 0);
+                glVertex3f(radius * 0.4f, 0, 0);
+                glVertex3f(radius, 0, 0);
+                glVertex3f(0, 0, -radius * 0.4f);
+                glVertex3f(0, 0, -radius);
+                glVertex3f(0, 0, radius * 0.4f);
+                glVertex3f(0, 0, radius);
+                glEnd();
+                glPopMatrix();
             } else {
                 float s = (1.0f - e.life) * 3.0f;
                 glColor4f(1, 0.5f, 0, e.life);
@@ -430,6 +585,91 @@ public class GameRenderer {
             glEnd();
             glPopMatrix();
         }
+    }
+
+    private void renderPathGuides() {
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_DEPTH_TEST);
+        glLineWidth(2.0f);
+        for (Unit u : gameState.units.values()) {
+            if (!selectedUnitIds.contains(u.id)) continue;
+            Vector3f target = getUnitGuideTarget(u);
+            if (target == null) continue;
+            float targetDist = u.position.distance(new org.joml.Vector2f(target.x, target.z));
+            if (targetDist < 0.75f) continue;
+            float startY = terrainHeightAt(u.position.x, u.position.y) + 0.18f;
+            float endY = terrainHeightAt(target.x, target.z) + 0.18f;
+            glColor4f(0.25f, 0.95f, 0.45f, 0.65f);
+            glBegin(GL_LINES);
+            glVertex3f(u.position.x, startY, u.position.y);
+            glVertex3f(target.x, endY, target.z);
+            glEnd();
+            renderPathArrow(target.x, endY, target.z);
+        }
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    private Vector3f getUnitGuideTarget(Unit u) {
+        if (u.targetUnitId != null) {
+            Unit target = gameState.units.get(u.targetUnitId);
+            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+        }
+        if (u.attackTargetBuildingId != null) {
+            Building target = gameState.buildings.get(u.attackTargetBuildingId);
+            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+        }
+        if (u.targetBuildingId != null) {
+            Building target = gameState.buildings.get(u.targetBuildingId);
+            if (target != null) return new Vector3f(target.position.x, 0, target.position.y);
+        }
+        if (u.targetPosition.distanceSquared(u.position) > 0.5f) {
+            return new Vector3f(u.targetPosition.x, 0, u.targetPosition.y);
+        }
+        return null;
+    }
+
+    private void renderPathArrow(float x, float y, float z) {
+        glPushMatrix();
+        glTranslatef(x, y, z);
+        glColor4f(0.25f, 0.95f, 0.45f, 0.9f);
+        glBegin(GL_TRIANGLES);
+        glVertex3f(0.0f, 0.0f, 0.0f);
+        glVertex3f(-0.3f, 0.0f, -0.3f);
+        glVertex3f(0.3f, 0.0f, -0.3f);
+        glEnd();
+        glPopMatrix();
+    }
+
+    private void renderSelectionRanges(int myTeamId) {
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_DEPTH_TEST);
+        glLineWidth(1.8f);
+        for (Unit u : gameState.units.values()) {
+            if (u.teamId != myTeamId) continue;
+            if (!selectedUnitIds.contains(u.id) || u.attackRange <= 0.0f) continue;
+            float y = terrainHeightAt(u.position.x, u.position.y) + 0.08f;
+            renderRangeCircle(u.position.x, y, u.position.y, u.attackRange, 0.2f, 0.9f, 1.0f, 0.35f);
+        }
+        for (Building b : gameState.buildings.values()) {
+            if (b.teamId != myTeamId) continue;
+            if (!selectedBuildingIds.contains(b.id) || b.attackDamage <= 0.0f || b.attackRange <= 0.0f) continue;
+            float y = terrainHeightAt(b.position.x, b.position.y) + 0.08f;
+            renderRangeCircle(b.position.x, y, b.position.y, b.attackRange, 1.0f, 0.9f, 0.2f, 0.32f);
+        }
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    private void renderRangeCircle(float x, float y, float z, float radius, float r, float g, float b, float a) {
+        glPushMatrix();
+        glTranslatef(x, y, z);
+        glColor4f(r, g, b, a);
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 64; i++) {
+            float angle = (float) (Math.PI * 2.0 * i / 64.0);
+            glVertex3f((float) Math.cos(angle) * radius, 0.0f, (float) Math.sin(angle) * radius);
+        }
+        glEnd();
+        glPopMatrix();
     }
 
     private void renderSelectionBox(boolean isSelecting, double selectionStartX, double selectionStartY) {
@@ -490,6 +730,25 @@ public class GameRenderer {
                 glEnd();
             }
         }
+        synchronized (combatMarkers) {
+            for (CombatMarker marker : combatMarkers) {
+                float px = x + (marker.x / MapSettings.WORLD_SIZE) * size;
+                float py = y + (marker.z / MapSettings.WORLD_SIZE) * size;
+                float alpha = Math.max(0.15f, marker.life);
+                glColor4f(1.0f, 0.25f, 0.1f, alpha);
+                glBegin(GL_TRIANGLES);
+                glVertex2f(px, py - 4);
+                glVertex2f(px - 3, py + 3);
+                glVertex2f(px + 3, py + 3);
+                glEnd();
+                glBegin(GL_LINES);
+                glVertex2f(px - 4, py - 4);
+                glVertex2f(px + 4, py + 4);
+                glVertex2f(px - 4, py + 4);
+                glVertex2f(px + 4, py - 4);
+                glEnd();
+            }
+        }
         glColor3f(1, 1, 1);
         glBegin(GL_LINE_LOOP);
         float viewportSize = 150.0f;
@@ -505,6 +764,11 @@ public class GameRenderer {
 
     private void renderHUD(int myTeamId, Building.Type selectedBuildType) {
         float hudY = windowHeight - 80;
+        double[] cursorX = new double[1];
+        double[] cursorY = new double[1];
+        glfwGetCursorPos(window, cursorX, cursorY);
+        float mouseX = (float) cursorX[0];
+        float mouseY = (float) cursorY[0];
         glColor4f(0.06f, 0.08f, 0.06f, 0.92f);
         glBegin(GL_QUADS);
         glVertex2f(0, hudY);
@@ -554,18 +818,38 @@ public class GameRenderer {
                 }
             }
         }
+        List<String> tooltip = null;
         if (cS) {
-            renderButton(20, hudY + 10, 120, 60, "FACTORY", selectedBuildType == Building.Type.FACTORY);
-            renderButton(150, hudY + 10, 120, 60, "WALL", selectedBuildType == Building.Type.WALL);
-            renderButton(280, hudY + 10, 120, 60, "EXTRACT", selectedBuildType == Building.Type.EXTRACTOR);
-            renderButton(410, hudY + 10, 120, 60, "LASER", selectedBuildType == Building.Type.LASER_TOWER);
+            boolean hoverFactory = isInsideRect(mouseX, mouseY, 20, hudY + 10, 120, 60);
+            boolean hoverWall = isInsideRect(mouseX, mouseY, 150, hudY + 10, 120, 60);
+            boolean hoverExtractor = isInsideRect(mouseX, mouseY, 280, hudY + 10, 120, 60);
+            boolean hoverLaser = isInsideRect(mouseX, mouseY, 410, hudY + 10, 120, 60);
+            renderButton(20, hudY + 10, 120, 60, "FACTORY", selectedBuildType == Building.Type.FACTORY, hoverFactory);
+            renderButton(150, hudY + 10, 120, 60, "WALL", selectedBuildType == Building.Type.WALL, hoverWall);
+            renderButton(280, hudY + 10, 120, 60, "EXTRACT", selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor);
+            renderButton(410, hudY + 10, 120, 60, "LASER", selectedBuildType == Building.Type.LASER_TOWER, hoverLaser);
+            if (hoverFactory) tooltip = describeBuildingType(Building.Type.FACTORY);
+            else if (hoverWall) tooltip = describeBuildingType(Building.Type.WALL);
+            else if (hoverExtractor) tooltip = describeBuildingType(Building.Type.EXTRACTOR);
+            else if (hoverLaser) tooltip = describeBuildingType(Building.Type.LASER_TOWER);
         } else if (factory != null) {
-            renderButton(20, hudY + 10, 150, 60, "TANK (" + factory.productionQueue.size() + ")", true);
-            renderButton(180, hudY + 10, 150, 60, "BOT", true);
+            boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
+            boolean hoverBot = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
+            renderButton(20, hudY + 10, 150, 60, "TANK (" + factory.productionQueue.size() + ")", true, hoverTank);
+            renderButton(180, hudY + 10, 150, 60, "BOT", true, hoverBot);
+            if (hoverTank) tooltip = describeUnitType(Unit.Type.TANK);
+            else if (hoverBot) tooltip = describeUnitType(Unit.Type.CONSTRUCTOR);
         } else {
             drawText("SELECT ALLIES", 20, hudY + 35, 1.5f);
         }
         drawText("WASD:Move Rotate:R-Drag Select:L-Drag Action:R-Click ESC:Menu", 450, hudY + 35, 1.2f);
+
+        if (tooltip == null && mouseY < hudY) {
+            tooltip = getHoveredWorldTooltip(mouseX, mouseY, myTeamId);
+        }
+        if (tooltip != null && !tooltip.isEmpty()) {
+            renderTooltipPanel(mouseX + 18.0f, Math.max(20.0f, mouseY - 10.0f), tooltip);
+        }
     }
 
     private void renderMenu() {
@@ -628,6 +912,10 @@ public class GameRenderer {
     }
 
     private void renderButton(float x, float y, float width, float height, String label, boolean active) {
+        renderButton(x, y, width, height, label, active, false);
+    }
+
+    private void renderButton(float x, float y, float width, float height, String label, boolean active, boolean hovered) {
         glColor4f(0, 0, 0, 0.35f);
         glBegin(GL_QUADS);
         glVertex2f(x + 3, y + 4);
@@ -636,6 +924,7 @@ public class GameRenderer {
         glVertex2f(x + 3, y + height + 4);
         glEnd();
         if (active) glColor3f(0.16f, 0.58f, 0.26f);
+        else if (hovered) glColor3f(0.22f, 0.28f, 0.22f);
         else glColor3f(0.18f, 0.2f, 0.18f);
         glBegin(GL_QUADS);
         glVertex2f(x, y);
@@ -652,6 +941,164 @@ public class GameRenderer {
         glVertex2f(x, y + height);
         glEnd();
         drawText(label, x + 12, y + 35, 1.45f);
+    }
+
+    private boolean isInsideRect(float x, float y, float rectX, float rectY, float rectW, float rectH) {
+        return x >= rectX && x <= rectX + rectW && y >= rectY && y <= rectY + rectH;
+    }
+
+    private List<String> describeUnitType(Unit.Type type) {
+        List<String> lines = new ArrayList<>();
+        if (type == Unit.Type.TANK) {
+            lines.add("TANK");
+            lines.add("HP: 300");
+            lines.add("DMG: 25");
+            lines.add("RANGE: 30");
+            lines.add("SPD: 10");
+            lines.add("ROLE: Front-line combat unit");
+        } else {
+            lines.add("CONSTRUCTOR");
+            lines.add("HP: 150");
+            lines.add("DMG: 0");
+            lines.add("RANGE: 0");
+            lines.add("SPD: 12");
+            lines.add("ROLE: Builds structures");
+        }
+        return lines;
+    }
+
+    private List<String> describeBuildingType(Building.Type type) {
+        List<String> lines = new ArrayList<>();
+        switch (type) {
+            case FACTORY -> {
+                lines.add("FACTORY");
+                lines.add("HP: 1000");
+                lines.add("PROD: Tank / Bot");
+                lines.add("ROLE: Unit production");
+            }
+            case WALL -> {
+                lines.add("WALL");
+                lines.add("HP: 500");
+                lines.add("ROLE: Basic barrier");
+            }
+            case EXTRACTOR -> {
+                lines.add("EXTRACTOR");
+                lines.add("HP: 800");
+                lines.add("ROLE: Resource income");
+            }
+            case LASER_TOWER -> {
+                lines.add("LASER TOWER");
+                lines.add("HP: 650");
+                lines.add("DMG: 18");
+                lines.add("RANGE: 28");
+                lines.add("CD: 0.8s");
+                lines.add("ROLE: Defensive weapon");
+            }
+            default -> {
+                lines.add(type.name());
+                lines.add("No extra data");
+            }
+        }
+        return lines;
+    }
+
+    private List<String> getHoveredWorldTooltip(float mouseX, float mouseY, int myTeamId) {
+        List<String> best = null;
+        float bestDist = Float.MAX_VALUE;
+        synchronized (gameState) {
+            for (Unit u : gameState.units.values()) {
+                float groundY = terrainHeightAt(u.position.x, u.position.y) + 0.5f;
+                Vector3f screen = projectWorldToScreen(u.position.x, groundY, u.position.y);
+                if (screen.z < 0.0f || screen.z > 1.0f) continue;
+                float dist = screenDistance(mouseX, mouseY, screen.x, screen.y);
+                float threshold = 18.0f + u.radius * 10.0f;
+                if (dist <= threshold && dist < bestDist) {
+                    bestDist = dist;
+                    best = describeUnitInfo(u);
+                }
+            }
+            for (Building b : gameState.buildings.values()) {
+                float groundY = terrainHeightAt(b.position.x, b.position.y) + b.size / 2.0f;
+                Vector3f screen = projectWorldToScreen(b.position.x, groundY, b.position.y);
+                if (screen.z < 0.0f || screen.z > 1.0f) continue;
+                float dist = screenDistance(mouseX, mouseY, screen.x, screen.y);
+                float threshold = 22.0f + b.size * 6.0f;
+                if (dist <= threshold && dist < bestDist) {
+                    bestDist = dist;
+                    best = describeBuildingInfo(b);
+                }
+            }
+        }
+        return best;
+    }
+
+    private float screenDistance(float x1, float y1, float x2, float y2) {
+        float dx = x1 - x2;
+        float dy = y1 - y2;
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private List<String> describeUnitInfo(Unit u) {
+        List<String> lines = new ArrayList<>();
+        lines.add(u.type.name());
+        lines.add("TEAM: " + u.teamId);
+        lines.add("HP: " + (int) u.hp + " / " + (int) u.maxHp);
+        lines.add("DMG: " + (int) u.attackDamage);
+        lines.add("RANGE: " + (int) u.attackRange);
+        lines.add("SPD: " + String.format("%.1f", u.speed));
+        return lines;
+    }
+
+    private List<String> describeBuildingInfo(Building b) {
+        List<String> lines = new ArrayList<>();
+        lines.add(b.type.name());
+        lines.add("TEAM: " + b.teamId);
+        lines.add("HP: " + (int) b.hp + " / " + (int) b.maxHp);
+        if (!b.isComplete) {
+            lines.add(String.format("BUILD: %.0f%%", b.buildProgress * 100.0f));
+        }
+        if (b.attackRange > 0.0f && b.attackDamage > 0.0f) {
+            lines.add("DMG: " + (int) b.attackDamage);
+            lines.add("RANGE: " + (int) b.attackRange);
+        }
+        if (b.type == Building.Type.FACTORY) {
+            lines.add("QUEUE: " + b.productionQueue.size());
+        }
+        if (b.type == Building.Type.EXTRACTOR) {
+            lines.add("ROLE: Resource income");
+        }
+        return lines;
+    }
+
+    private void renderTooltipPanel(float x, float y, List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return;
+        }
+        float maxChars = 0.0f;
+        for (String line : lines) {
+            maxChars = Math.max(maxChars, line.length());
+        }
+        float width = Math.max(180.0f, Math.min(360.0f, maxChars * 8.0f + 26.0f));
+        float height = 18.0f + lines.size() * 18.0f;
+        float px = clamp(x, 10.0f, windowWidth - width - 10.0f);
+        float py = clamp(y - height, 10.0f, windowHeight - height - 10.0f);
+        glColor4f(0.03f, 0.05f, 0.03f, 0.95f);
+        glBegin(GL_QUADS);
+        glVertex2f(px, py);
+        glVertex2f(px + width, py);
+        glVertex2f(px + width, py + height);
+        glVertex2f(px, py + height);
+        glEnd();
+        glColor4f(0.34f, 0.85f, 0.45f, 0.8f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(px, py);
+        glVertex2f(px + width, py);
+        glVertex2f(px + width, py + height);
+        glVertex2f(px, py + height);
+        glEnd();
+        for (int i = 0; i < lines.size(); i++) {
+            drawText(lines.get(i), px + 12.0f, py + 20.0f + i * 18.0f, 1.25f);
+        }
     }
 
     private void drawText(String text, float x, float y, float scale) {
