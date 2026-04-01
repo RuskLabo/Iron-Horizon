@@ -26,6 +26,12 @@ import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
 
 public class ClientLauncher {
+    private enum LoadingPhase {
+        LOAD_ASSETS,
+        CONNECT_SERVER,
+        READY
+    }
+
     private long window;
     private Client client;
     private final GameState gameState = new GameState();
@@ -37,6 +43,7 @@ public class ClientLauncher {
     private final List<GameRenderer.Effect> effects = new ArrayList<>();
     private final List<Vector3f> pathPreviewPoints = new ArrayList<>();
     private final List<Network.ProjectileData> projectileData = new ArrayList<>();
+    private final Map<Integer, Vector2f> localUnitTargets = new HashMap<>();
     private GameRenderer renderer;
 
     private int myTeamId = 0;
@@ -49,6 +56,7 @@ public class ClientLauncher {
     private boolean isSelecting = false;
     private boolean isPathDrawing = false;
     private boolean pathQueueMode = false;
+    private LoadingPhase loadingPhase = LoadingPhase.LOAD_ASSETS;
     private double selectionStartX;
     private double selectionStartY;
     private double pathStartX;
@@ -92,9 +100,13 @@ public class ClientLauncher {
                 combatMarkers,
                 effects,
                 pathPreviewPoints,
-                projectileData);
+                projectileData,
+                localUnitTargets);
 
         glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
+            if (loadingPhase != LoadingPhase.READY) {
+                return;
+            }
             double[] x = new double[1], y = new double[1];
             glfwGetCursorPos(w, x, y);
             if (isMenuOpen) {
@@ -134,6 +146,9 @@ public class ClientLauncher {
         });
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
+            if (loadingPhase != LoadingPhase.READY) {
+                return;
+            }
             if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) {
                 shiftDown = action != GLFW_RELEASE;
             }
@@ -154,15 +169,57 @@ public class ClientLauncher {
         });
 
         glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
+            if (loadingPhase != LoadingPhase.READY) {
+                return;
+            }
             renderer.onMouseMoved(xpos, ypos, isMenuOpen, selectedBuildType, isPathDrawing);
             if (isPathDrawing) {
                 updatePathPreview(xpos, ypos);
             }
         });
-        glfwSetScrollCallback(window, (w, xoffset, yoffset) -> renderer.onScroll(yoffset, isMenuOpen));
+        glfwSetScrollCallback(window, (w, xoffset, yoffset) -> {
+            if (loadingPhase != LoadingPhase.READY) {
+                return;
+            }
+            renderer.onScroll(yoffset, isMenuOpen);
+        });
         glfwShowWindow(window);
-        renderer.init();
+        renderer.prepareCore();
+        loadingPhase = LoadingPhase.LOAD_ASSETS;
+    }
 
+    private void advanceLoadingPhase() {
+        if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
+            renderer.loadGameAssets();
+            loadingPhase = LoadingPhase.CONNECT_SERVER;
+            return;
+        }
+        if (loadingPhase == LoadingPhase.CONNECT_SERVER) {
+            startClientConnection();
+            loadingPhase = LoadingPhase.READY;
+        }
+    }
+
+    private void renderLoadingFrame() {
+        if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
+            renderer.renderLoadingScreen(
+                    "Preparing battlefield",
+                    "Generating command cards and loading terrain data.",
+                    0.45f);
+        } else if (loadingPhase == LoadingPhase.CONNECT_SERVER) {
+            renderer.renderLoadingScreen(
+                    "Connecting to server",
+                    "Syncing factions, units, and buildings.",
+                    0.85f);
+        } else {
+            renderer.renderLoadingScreen(
+                    "Starting",
+                    "Finalizing client startup.",
+                    1.0f);
+        }
+    }
+
+    private void startClientConnection() {
         client = new Client(256000, 256000);
         Network.register(client);
         client.addListener(new Listener() {
@@ -236,6 +293,8 @@ public class ClientLauncher {
                                 effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.LASER, e.x, e.y, e.tx, e.ty));
                             } else if (e.type == Network.CombatEvent.Type.EXPLOSION) {
                                 effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.EXPLOSION, e.x, e.y, 0, 0));
+                            } else if (e.type == Network.CombatEvent.Type.OBELISK_BLAST) {
+                                effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.OBELISK_BLAST, e.x, e.y, e.tx, e.ty));
                             }
                             combatMarkers.add(new GameRenderer.CombatMarker(e.x, e.y));
                         }
@@ -488,34 +547,63 @@ public class ClientLauncher {
                 }
             }
         }
+        // ローカルターゲットを更新
+        Vector2f targetVec = new Vector2f(target.x, target.z);
+        for (Integer id : selectedUnitIds) {
+            localUnitTargets.put(id, new Vector2f(targetVec));
+        }
         client.sendTCP(cmd);
     }
 
     private void sendMovePathCommand(float startX, float startY, float endX, float endY, boolean queue) {
         if (selectedUnitIds.isEmpty()) return;
-        synchronized (pathPreviewPoints) {
-            if (pathPreviewPoints.isEmpty()) {
-                Vector3f start = new Vector3f(startX, 0.0f, startY);
-                Vector3f end = new Vector3f(endX, 0.0f, endY);
-                pathPreviewPoints.add(start);
-                pathPreviewPoints.add(end);
-            }
-        }
-        Network.MoveCommand cmd = new Network.MoveCommand();
-        cmd.unitIds.addAll(selectedUnitIds);
-        cmd.queue = queue;
-        cmd.waypoints.clear();
+
         float dx = endX - startX;
         float dy = endY - startY;
         float dist = (float) Math.sqrt(dx * dx + dy * dy);
-        int segments = Math.max(2, (int) (dist / 8.0f));
-        for (int i = 0; i <= segments; i++) {
-            float t = i / (float) segments;
-            cmd.waypoints.add(new Vector2f(startX + dx * t, startY + dy * t));
+
+        // ライン方向ベクトルへの射影でユニットをソート（ライン始点に近い順）
+        List<Integer> sortedUnitIds = new ArrayList<>(selectedUnitIds);
+        if (dist > 0.001f) {
+            float invDist = 1.0f / dist;
+            float lx = dx * invDist;
+            float lz = dy * invDist;
+            synchronized (gameState) {
+                sortedUnitIds.sort((a, b) -> {
+                    Unit ua = gameState.units.get(a);
+                    Unit ub = gameState.units.get(b);
+                    float pa = (ua != null) ? (ua.position.x * lx + ua.position.y * lz) : 0f;
+                    float pb = (ub != null) ? (ub.position.x * lx + ub.position.y * lz) : 0f;
+                    return Float.compare(pa, pb);
+                });
+            }
         }
-        cmd.targetX = endX;
-        cmd.targetY = endY;
-        client.sendTCP(cmd);
+
+        int n = sortedUnitIds.size();
+        for (int i = 0; i < n; i++) {
+            float t = (n == 1) ? 0.5f : i / (float) (n - 1);
+            float destX = startX + dx * t;
+            float destY = startY + dy * t;
+
+            Network.MoveCommand cmd = new Network.MoveCommand();
+            cmd.unitIds.add(sortedUnitIds.get(i));
+            cmd.queue = queue;
+            cmd.targetX = destX;
+            cmd.targetY = destY;
+            client.sendTCP(cmd);
+
+            localUnitTargets.put(sortedUnitIds.get(i), new Vector2f(destX, destY));
+        }
+
+        // パスプレビューは始点〜終点の全体ラインとして表示
+        synchronized (pathPreviewPoints) {
+            pathPreviewPoints.clear();
+            int segments = Math.max(2, (int) (dist / 8.0f));
+            for (int i = 0; i <= segments; i++) {
+                float t = i / (float) segments;
+                pathPreviewPoints.add(new Vector3f(startX + dx * t, 0.0f, startY + dy * t));
+            }
+        }
     }
 
     private void sendProduceCommand(int factoryId, Unit.Type type) {
@@ -547,6 +635,13 @@ public class ClientLauncher {
             float frameTimeMs = (float) (now - lastTime);
             float fps = dt > 0.0f ? 1.0f / dt : 0.0f;
             lastTime = now;
+            if (loadingPhase != LoadingPhase.READY) {
+                renderLoadingFrame();
+                glfwSwapBuffers(window);
+                glfwPollEvents();
+                advanceLoadingPhase();
+                continue;
+            }
             if (!isMenuOpen) {
                 handleInput(dt);
                 syncViewport();

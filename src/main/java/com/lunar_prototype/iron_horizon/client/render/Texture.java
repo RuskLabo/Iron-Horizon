@@ -63,6 +63,38 @@ public class Texture implements AutoCloseable {
         return new Texture(width, height, createGrassTextureData(width, height));
     }
 
+    public static Texture fromBufferedImage(BufferedImage image) {
+        return fromBufferedImage(image, false);
+    }
+
+    public static Texture fromBufferedImage(BufferedImage image, boolean forceOpaque) {
+        if (image == null) {
+            throw new IllegalArgumentException("image must not be null");
+        }
+        int width = image.getWidth();
+        int height = image.getHeight();
+        ByteBuffer buffer = BufferUtils.createByteBuffer(width * height * 4);
+        for (int y = 0; y < height; y++) {
+            int sourceY = height - 1 - y;
+            for (int x = 0; x < width; x++) {
+                int argb = image.getRGB(x, sourceY);
+                int a = (argb >>> 24) & 0xFF;
+                int r = (argb >>> 16) & 0xFF;
+                int g = (argb >>> 8) & 0xFF;
+                int b = argb & 0xFF;
+                if (forceOpaque) {
+                    a = 255;
+                }
+                buffer.put((byte) r);
+                buffer.put((byte) g);
+                buffer.put((byte) b);
+                buffer.put((byte) a);
+            }
+        }
+        buffer.flip();
+        return new Texture(width, height, buffer);
+    }
+
     public static Texture createTeamTintedTexture(Class<?> anchor, String resourcePath, float teamR, float teamG, float teamB) throws IOException {
         return createTeamTintedTexture(anchor, resourcePath, teamR, teamG, teamB, false);
     }
