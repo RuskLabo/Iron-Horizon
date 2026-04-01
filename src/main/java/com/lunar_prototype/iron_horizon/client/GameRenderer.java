@@ -14,14 +14,13 @@ import com.lunar_prototype.iron_horizon.client.render.TerrainGenerator;
 import com.lunar_prototype.iron_horizon.client.render.TerrainMeshFactory;
 import com.lunar_prototype.iron_horizon.client.render.UiIconFactory;
 import com.lunar_prototype.iron_horizon.client.render.Texture;
+import com.lunar_prototype.iron_horizon.client.render.FontRenderer;
+import com.lunar_prototype.iron_horizon.client.ui.*;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
-import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL;
-import org.lwjgl.stb.STBEasyFont;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -101,6 +100,7 @@ public class GameRenderer {
     private static final float HOUND_MODEL_YAW_OFFSET = 90.0f;
     private static final float OBELISK_MODEL_YAW_OFFSET = 90.0f;
     private final FsrUpscaler fsrUpscaler = new FsrUpscaler();
+    private FontRenderer fontRenderer;
     private boolean corePrepared = false;
     private boolean assetsLoaded = false;
 
@@ -191,6 +191,11 @@ public class GameRenderer {
             glViewport(0, 0, framebufferWidth, framebufferHeight);
         });
         glViewport(0, 0, framebufferWidth, framebufferHeight);
+        try {
+            fontRenderer = new FontRenderer("/fonts/MPLUS1-Medium.ttf", 13.0f);
+        } catch (Exception e) {
+            System.err.println("Failed to load font: " + e.getMessage());
+        }
         corePrepared = true;
     }
 
@@ -297,6 +302,10 @@ public class GameRenderer {
         if (constructorIcon != null) {
             constructorIcon.close();
             constructorIcon = null;
+        }
+        if (fontRenderer != null) {
+            fontRenderer.close();
+            fontRenderer = null;
         }
         if (obeliskIcon != null) {
             obeliskIcon.close();
@@ -486,7 +495,7 @@ public class GameRenderer {
             renderButton(px + 30, py + 280, 210, 50, "CONNECT", 0.2f, 0.6f, 0.3f);
             renderButton(px + 260, py + 280, 210, 50, "LOCAL", 0.3f, 0.4f, 0.6f);
             renderButton(px + 30, py + 340, 210, 50, "GRAPHICS", 0.35f, 0.45f, 0.25f);
-            drawText("Press ENTER to Connect / ESC to Quit", px + 30, py + 410, 1.0f);
+            drawText("Press ENTER to Connect / ESC to Quit", px + 30, py + 400, 1.0f);
         }
     }
 
@@ -578,7 +587,7 @@ public class GameRenderer {
         glVertex2f(x, y + h);
         glEnd();
 
-        drawText(text + (active && (System.currentTimeMillis() / 500 % 2 == 0) ? "_" : ""), x + 10, y + 25, 1.5f);
+        drawText(text + (active && (System.currentTimeMillis() / 500 % 2 == 0) ? "_" : ""), x + 10, y + 8, 1.5f);
     }
 
     private void renderButton(float x, float y, float w, float h, String label, float r, float g, float b) {
@@ -592,7 +601,7 @@ public class GameRenderer {
 
         glColor4f(1, 1, 1, 0.9f);
         float tw = label.length() * 12.0f; // 簡易的な幅計算
-        drawText(label, x + (w - tw) / 2, y + 30, 1.5f);
+        drawText(label, x + (w - tw) / 2, y + 12, 1.5f);
     }
 
     public void renderLoadingScreen(String title, String detail, float progress) {
@@ -1516,37 +1525,76 @@ public class GameRenderer {
 
     private void renderActionCard(float x, float y, float width, float height, String label, int cost, Texture icon,
             boolean active, boolean hovered, String badgeText) {
-        glColor4f(0, 0, 0, 0.40f);
-        glBegin(GL_QUADS);
-        glVertex2f(x + 4, y + 5);
-        glVertex2f(x + width + 4, y + 5);
-        glVertex2f(x + width + 4, y + height + 5);
-        glVertex2f(x + 4, y + height + 5);
-        glEnd();
-        if (active)
-            glColor3f(0.16f, 0.58f, 0.26f);
-        else if (hovered)
-            glColor3f(0.22f, 0.28f, 0.22f);
-        else
-            glColor3f(0.14f, 0.18f, 0.14f);
-        glBegin(GL_QUADS);
-        glVertex2f(x, y);
-        glVertex2f(x + width, y);
-        glVertex2f(x + width, y + height);
-        glVertex2f(x, y + height);
-        glEnd();
-        glColor4f(0.34f, 0.85f, 0.45f, 0.90f);
-        glLineWidth(2);
-        glBegin(GL_LINE_LOOP);
-        glVertex2f(x, y);
-        glVertex2f(x + width, y);
-        glVertex2f(x + width, y + height);
-        glVertex2f(x, y + height);
-        glEnd();
+        UiBox root = new UiBox();
+        root.x = x;
+        root.y = y;
+        root.width = width;
+        root.height = height;
+        root.setPadding(6);
+        root.drawBorder = true;
+
+        if (active) {
+            root.bgR = 0.16f;
+            root.bgG = 0.58f;
+            root.bgB = 0.26f;
+        } else if (hovered) {
+            root.bgR = 0.22f;
+            root.bgG = 0.28f;
+            root.bgB = 0.22f;
+        } else {
+            root.bgR = 0.14f;
+            root.bgG = 0.18f;
+            root.bgB = 0.14f;
+        }
+        root.bgA = 0.92f;
+        root.borderR = 0.34f;
+        root.borderG = 0.85f;
+        root.borderB = 0.45f;
+        root.borderA = 0.90f;
+
+        // メインの内容（アイコンとラベル）を横に並べるスタック
+        UiStack mainStack = new UiStack(UiStack.Orientation.HORIZONTAL);
+        mainStack.spacing = 10;
+        root.addChild(mainStack);
+
+        // アイコン（あれば）
         if (icon != null) {
             float iconSize = height - 16.0f;
-            drawTexture(icon, x + 6.0f, y + 8.0f, iconSize, iconSize);
+            // UiIconコンポーネントがないので直接描画するか、専用のコンポーネントを作る必要があるが
+            // ここでは簡易的な描き込み（renderメソッドをオーバーライドしたUiElement）を使用
+            mainStack.addChild(new UiElement() {
+                @Override
+                public void render() {
+                    drawTexture(icon, x, y, width, height);
+                }
+
+                @Override
+                public void updateLayout() {
+                }
+
+                @Override
+                public float getPreferredWidth() {
+                    return iconSize;
+                }
+
+                @Override
+                public float getPreferredHeight() {
+                    return iconSize;
+                }
+            });
         }
+
+        // ラベル
+        UiLabel uiLabel = new UiLabel(label, fontRenderer);
+        uiLabel.scale = label.length() > 8 ? 1.05f : 1.25f;
+        uiLabel.setColor(0.93f, 0.98f, 0.93f, 1.0f);
+        uiLabel.marginTop = 12; // ラベルを中央寄りに調整
+        mainStack.addChild(uiLabel);
+
+        root.updateLayout();
+        root.render();
+
+        // コストバッジ（右上固定配置なので既存のメソッドを利用しつつ座標を整備）
         glColor4f(0.06f, 0.08f, 0.06f, 0.8f);
         glBegin(GL_QUADS);
         glVertex2f(x + width - 54, y + 8);
@@ -1555,8 +1603,9 @@ public class GameRenderer {
         glVertex2f(x + width - 54, y + 25);
         glEnd();
         glColor3f(0.9f, 0.95f, 0.9f);
-        // コストテキスト：さらに右（-40）かつ上（y + 24）へ
-        drawText(String.valueOf(cost), x + width - 40, y + 24.0f, 1.05f);
+        drawText(String.valueOf(cost), x + width - 40, y + 8.0f, 1.05f); // y座標はdrawText内部で調整されるため 8.0f に
+
+        // バッジテキスト（生産キュー等）
         if (badgeText != null && !badgeText.isEmpty()) {
             glColor4f(0.08f, 0.12f, 0.08f, 0.9f);
             glBegin(GL_QUADS);
@@ -1566,14 +1615,8 @@ public class GameRenderer {
             glVertex2f(x + width - 50, y + height - 3);
             glEnd();
             glColor3f(0.8f, 0.95f, 0.82f);
-            // バッジテキスト位置調整
-            drawText(badgeText, x + width - 40, y + height - 5.0f, 0.85f);
+            drawText(badgeText, x + width - 38, y + height - 15.0f, 0.85f);
         }
-        glColor3f(0.93f, 0.98f, 0.93f);
-        // ラベルの見切れ対策：文字数が多い場合はスケールを落とす
-        float labelScale = label.length() > 8 ? 1.05f : 1.25f;
-        // ラベルテキスト：少し右（60）かつ上（y + 40）へ
-        drawText(label, x + 60, y + 40.0f, labelScale);
     }
 
     private void drawTexture(Texture texture, float x, float y, float width, float height) {
@@ -1901,24 +1944,12 @@ public class GameRenderer {
     }
 
     private void drawText(String text, float x, float y, float scale) {
-        if (text == null || text.isEmpty()) {
+        if (text == null || text.isEmpty() || fontRenderer == null) {
             return;
         }
-        ByteBuffer buffer = BufferUtils.createByteBuffer(text.length() * 270);
-        int vertices = STBEasyFont.stb_easy_font_print(0, 0, text, null, buffer);
-        glPushMatrix();
-        glTranslatef(x, y, 0);
-        glScalef(scale, scale, 1);
-        glDisable(GL_TEXTURE_2D);
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glEnableClientState(GL_COLOR_ARRAY);
-        glVertexPointer(2, GL_FLOAT, 16, buffer);
-        buffer.position(12);
-        glColorPointer(4, GL_UNSIGNED_BYTE, 16, buffer);
-        glDrawArrays(GL_QUADS, 0, vertices * 4);
-        glDisableClientState(GL_COLOR_ARRAY);
-        glDisableClientState(GL_VERTEX_ARRAY);
-        glPopMatrix();
+        float[] color = new float[4];
+        glGetFloatv(GL_CURRENT_COLOR, color);
+        fontRenderer.drawText(text, x, y, color[0], color[1], color[2], color[3], scale);
     }
 
     private void renderProgressBar(float x, float y, float z, float width, float progress, float r, float g, float b) {
