@@ -1,0 +1,27 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Detecting the operating system and CPU architecture
+[INFO] ------------------------------------------------------------------------
+[INFO] os.detected.name: osx
+[INFO] os.detected.arch: x86_64
+[INFO] os.detected.bitness: 64
+[INFO] os.detected.version: 10.15
+[INFO] os.detected.version.major: 10
+[INFO] os.detected.version.minor: 15
+[INFO] os.detected.classifier: osx-x86_64
+[INFO] 
+[INFO] ------------------< com.lunar_prototype:Iron-Horizon >------------------
+[INFO] Building Iron-Horizon 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- exec:3.1.0:exec (default-cli) @ Iron-Horizon ---
+Initializing Iron Horizon Server...
+00:00  INFO: [kryonet] Server opened.
+Network Server listening on ports 54555/54777
+Failed to link Singularity Native Library: /private/var/folders/w9/t4bp45l97r16gv77k2tf1bkh0000gq/T/dark_singularity_14889341239563486877.dylib: dlopen(/private/var/folders/w9/t4bp45l97r16gv77k2tf1bkh0000gq/T/dark_singularity_14889341239563486877.dylib, 1): no suitable image found.  Did find:
+	/private/var/folders/w9/t4bp45l97r16gv77k2tf1bkh0000gq/T/dark_singularity_14889341239563486877.dylib: mach-o, but wrong architecture
+	/private/var/folders/w9/t4bp45l97r16gv77k2tf1bkh0000gq/T/dark_singularity_14889341239563486877.dylib: mach-o, but wrong architecture
+00:15  INFO: [kryonet] Connection 1 connected: /127.0.0.1
+Login request from: Player1
+00:35  INFO: [kryonet] Connection 1 disconnected.
