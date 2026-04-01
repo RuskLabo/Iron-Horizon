@@ -5,6 +5,7 @@ import com.esotericsoftware.kryonet.Connection;
 import com.esotericsoftware.kryonet.Listener;
 import com.lunar_prototype.iron_horizon.client.GameRenderer;
 import com.lunar_prototype.iron_horizon.client.SoundManager;
+import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
 import com.lunar_prototype.iron_horizon.common.Network;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
@@ -60,7 +61,16 @@ public class ClientLauncher {
     private boolean isPathDrawing = false;
     private boolean pathQueueMode = false;
     private LoadingPhase loadingPhase = LoadingPhase.INITIAL_SETUP;
+    private enum SettingsContext {
+        INITIAL_SETUP,
+        PAUSE_MENU
+    }
+    private boolean settingsOpen = false;
+    private SettingsContext settingsContext = SettingsContext.INITIAL_SETUP;
     private final ConfigManager configManager = new ConfigManager();
+    private boolean fsrEnabled;
+    private FsrPreset fsrPreset;
+    private float fsrSharpness;
     private String inputServerIp = "";
     private String inputUsername = "";
     private int activeField = 0; // 0: IP, 1: Username
@@ -111,6 +121,11 @@ public class ClientLauncher {
                 projectileData,
                 localUnitTargets);
 
+        fsrEnabled = configManager.isFsrEnabled();
+        fsrPreset = configManager.getFsrPreset();
+        fsrSharpness = configManager.getFsrSharpness();
+        renderer.setFsrSettings(fsrEnabled, fsrPreset, fsrSharpness);
+
         inputServerIp = configManager.getServerIp();
         inputUsername = configManager.getUsername();
         loadingPhase = LoadingPhase.INITIAL_SETUP;
@@ -118,6 +133,13 @@ public class ClientLauncher {
         glfwSetMouseButtonCallback(window, (w, button, action, mods) -> {
             double[] x = new double[1], y = new double[1];
             glfwGetCursorPos(w, x, y);
+
+            if (settingsOpen) {
+                if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
+                    checkSettingsClick(x[0], y[0]);
+                }
+                return;
+            }
 
             if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
                 if (action == GLFW_PRESS && button == GLFW_MOUSE_BUTTON_LEFT) {
@@ -166,6 +188,13 @@ public class ClientLauncher {
         });
 
         glfwSetKeyCallback(window, (w, key, scancode, action, mods) -> {
+            if (settingsOpen) {
+                if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
+                    closeSettings();
+                }
+                return;
+            }
+
             if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
                 if (action == GLFW_PRESS) {
                     if (key == GLFW_KEY_ESCAPE) {
@@ -208,6 +237,9 @@ public class ClientLauncher {
         });
 
         glfwSetCharCallback(window, (w, codepoint) -> {
+            if (settingsOpen) {
+                return;
+            }
             if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
                 char c = (char) codepoint;
                 if (activeField == 0) {
@@ -219,6 +251,9 @@ public class ClientLauncher {
         });
 
         glfwSetCursorPosCallback(window, (w, xpos, ypos) -> {
+            if (settingsOpen) {
+                return;
+            }
             if (loadingPhase != LoadingPhase.READY) {
                 return;
             }
@@ -228,6 +263,9 @@ public class ClientLauncher {
             }
         });
         glfwSetScrollCallback(window, (w, xoffset, yoffset) -> {
+            if (settingsOpen) {
+                return;
+            }
             if (loadingPhase != LoadingPhase.READY) {
                 return;
             }
@@ -241,7 +279,7 @@ public class ClientLauncher {
         int[] w = new int[1], h = new int[1];
         glfwGetWindowSize(window, w, h);
         float pW = 500.0f;
-        float pH = 400.0f;
+        float pH = 450.0f;
         float px = (w[0] - pW) * 0.5f;
         float py = (h[0] - pH) * 0.5f;
 
@@ -261,6 +299,71 @@ public class ClientLauncher {
         else if (x > px + 260 && x < px + 470 && y > py + 280 && y < py + 330) {
             inputServerIp = "localhost";
             startConnectionPhase();
+        }
+        // Graphics Button
+        else if (x > px + 30 && x < px + 240 && y > py + 340 && y < py + 390) {
+            openSettings(SettingsContext.INITIAL_SETUP);
+        }
+    }
+
+    private void openSettings(SettingsContext context) {
+        settingsContext = context;
+        settingsOpen = true;
+    }
+
+    private void closeSettings() {
+        settingsOpen = false;
+    }
+
+    private void applyRenderSettings() {
+        renderer.setFsrSettings(fsrEnabled, fsrPreset, fsrSharpness);
+        configManager.setFsrEnabled(fsrEnabled);
+        configManager.setFsrPreset(fsrPreset);
+        configManager.setFsrSharpness(fsrSharpness);
+        configManager.save();
+    }
+
+    private void adjustSharpness(float delta) {
+        fsrSharpness = Math.max(0.0f, Math.min(2.0f, fsrSharpness + delta));
+        applyRenderSettings();
+    }
+
+    private void cyclePreset() {
+        fsrPreset = fsrPreset.next();
+        if (fsrPreset == FsrPreset.OFF) {
+            fsrEnabled = false;
+        } else if (!fsrEnabled) {
+            fsrEnabled = true;
+        }
+        applyRenderSettings();
+    }
+
+    private void toggleFsr() {
+        fsrEnabled = !fsrEnabled;
+        if (fsrEnabled && fsrPreset == FsrPreset.OFF) {
+            fsrPreset = FsrPreset.QUALITY;
+        }
+        applyRenderSettings();
+    }
+
+    private void checkSettingsClick(double x, double y) {
+        int[] w = new int[1], h = new int[1];
+        glfwGetWindowSize(window, w, h);
+        float pW = 620.0f;
+        float pH = 420.0f;
+        float px = (w[0] - pW) * 0.5f;
+        float py = (h[0] - pH) * 0.5f;
+
+        if (x > px + 30 && x < px + 210 && y > py + 120 && y < py + 168) {
+            toggleFsr();
+        } else if (x > px + 220 && x < px + 400 && y > py + 120 && y < py + 168) {
+            cyclePreset();
+        } else if (x > px + 30 && x < px + 90 && y > py + 225 && y < py + 267) {
+            adjustSharpness(-0.05f);
+        } else if (x > px + 260 && x < px + 320 && y > py + 225 && y < py + 267) {
+            adjustSharpness(0.05f);
+        } else if (x > px + pW - 180 && x < px + pW - 30 && y > py + pH - 68 && y < py + pH - 20) {
+            closeSettings();
         }
     }
 
@@ -285,7 +388,9 @@ public class ClientLauncher {
     }
 
     private void renderLoadingFrame() {
-        if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
+        if (settingsOpen && settingsContext == SettingsContext.INITIAL_SETUP) {
+            renderer.renderSettingsScreen("GRAPHICS SETTINGS", fsrEnabled, fsrPreset, fsrSharpness, true);
+        } else if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
             renderer.renderInitialSetupScreen(inputServerIp, inputUsername, activeField, isConnecting);
         } else if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
             renderer.renderLoadingScreen(
@@ -443,8 +548,11 @@ public class ClientLauncher {
             float vol = (float) ((x - (cx - 100)) / 200.0);
             soundManager.setMasterVolume(vol);
         }
-        if (x > cx - 100 && x < cx + 100 && y > cy + 40 && y < cy + 100) isMenuOpen = false;
-        if (x > cx - 100 && x < cx + 100 && y > cy + 110 && y < cy + 170) glfwSetWindowShouldClose(window, true);
+        if (x > cx - 100 && x < cx + 100 && y > cy + 40 && y < cy + 90) {
+            openSettings(SettingsContext.PAUSE_MENU);
+        }
+        if (x > cx - 100 && x < cx + 100 && y > cy + 100 && y < cy + 150) isMenuOpen = false;
+        if (x > cx - 100 && x < cx + 100 && y > cy + 160 && y < cy + 210) glfwSetWindowShouldClose(window, true);
     }
 
     private boolean checkUIClick(double x, double y) {
@@ -761,6 +869,12 @@ public class ClientLauncher {
                 glfwSwapBuffers(window);
                 glfwPollEvents();
                 advanceLoadingPhase();
+                continue;
+            }
+            if (settingsOpen) {
+                renderer.renderSettingsScreen("GRAPHICS SETTINGS", fsrEnabled, fsrPreset, fsrSharpness, false);
+                glfwSwapBuffers(window);
+                glfwPollEvents();
                 continue;
             }
             if (!isMenuOpen) {

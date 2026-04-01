@@ -7,6 +7,8 @@ import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
 import com.lunar_prototype.iron_horizon.client.render.Mesh;
 import com.lunar_prototype.iron_horizon.client.render.MeshFactory;
+import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
+import com.lunar_prototype.iron_horizon.client.render.FsrUpscaler;
 import com.lunar_prototype.iron_horizon.client.render.ObjLoader;
 import com.lunar_prototype.iron_horizon.client.render.TerrainGenerator;
 import com.lunar_prototype.iron_horizon.client.render.TerrainMeshFactory;
@@ -29,6 +31,7 @@ import java.util.Set;
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL11.glGetString;
+import static org.lwjgl.opengl.GL30.*;
 
 public class GameRenderer {
     public static class MoveMarker {
@@ -97,6 +100,7 @@ public class GameRenderer {
     private final Map<Integer, Float> unitFacingAngles = new HashMap<>();
     private static final float HOUND_MODEL_YAW_OFFSET = 90.0f;
     private static final float OBELISK_MODEL_YAW_OFFSET = 90.0f;
+    private final FsrUpscaler fsrUpscaler = new FsrUpscaler();
     private boolean corePrepared = false;
     private boolean assetsLoaded = false;
 
@@ -113,6 +117,9 @@ public class GameRenderer {
     private int currentRenderTeamId = 0;
     private int currentRenderPlayerId = 0;
     private boolean debugOverlayEnabled = false;
+    private boolean fsrEnabled = true;
+    private FsrPreset fsrPreset = FsrPreset.QUALITY;
+    private float fsrSharpness = 0.2f;
     private String glVersion = "";
     private String glRenderer = "";
     private String glVendor = "";
@@ -152,6 +159,15 @@ public class GameRenderer {
         loadGameAssets();
     }
 
+    public void setFsrSettings(boolean enabled, FsrPreset preset, float sharpness) {
+        this.fsrEnabled = enabled;
+        this.fsrPreset = preset != null ? preset : FsrPreset.QUALITY;
+        this.fsrSharpness = Math.max(0.0f, Math.min(2.0f, sharpness));
+        fsrUpscaler.setEnabled(enabled);
+        fsrUpscaler.setPreset(this.fsrPreset);
+        fsrUpscaler.setSharpness(this.fsrSharpness);
+    }
+
     public void prepareCore() {
         if (corePrepared) {
             return;
@@ -163,6 +179,7 @@ public class GameRenderer {
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        fsrUpscaler.init();
         refreshWindowSize();
         glfwSetWindowSizeCallback(window, (win, width, height) -> {
             windowWidth = Math.max(1, width);
@@ -224,6 +241,7 @@ public class GameRenderer {
     }
 
     public void cleanup() {
+        fsrUpscaler.cleanup();
         if (terrainMesh != null) {
             terrainMesh.close();
             terrainMesh = null;
@@ -392,9 +410,19 @@ public class GameRenderer {
             float frameTimeMs) {
         float dt = (fps > 0) ? 1.0f / fps : 0.016f;
         currentRenderTeamId = myTeamId;
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderWorldPass(myTeamId, selectedBuildType, dt);
-        renderOverlayPass();
+        if (fsrUpscaler.isEnabled()) {
+            fsrUpscaler.beginSceneRender(framebufferWidth, framebufferHeight);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            renderWorldPass(myTeamId, selectedBuildType, dt);
+            renderOverlayPass();
+            fsrUpscaler.presentSceneToBackBuffer(framebufferWidth, framebufferHeight);
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, framebufferWidth, framebufferHeight);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            renderWorldPass(myTeamId, selectedBuildType, dt);
+            renderOverlayPass();
+        }
         renderUiPass(myTeamId, isSelecting, selectionStartX, selectionStartY, selectedBuildType, isMenuOpen);
         if (debugOverlayEnabled) {
             setup2D();
@@ -417,7 +445,7 @@ public class GameRenderer {
         glEnd();
 
         float pW = 500.0f;
-        float pH = 400.0f;
+        float pH = 450.0f;
         float px = (windowWidth - pW) * 0.5f;
         float py = (windowHeight - pH) * 0.5f;
 
@@ -448,14 +476,81 @@ public class GameRenderer {
         drawText("COMMANDER NAME", px + 30, py + 190, 1.2f);
         renderInputField(px + 30, py + 210, pW - 60, 40, username, activeField == 1);
 
+        drawText("FSR: " + (fsrEnabled ? fsrPreset.label() : "Off"), px + 30, py + 315, 1.05f);
+        drawText(String.format("Sharpness: %.2f", fsrSharpness), px + 260, py + 315, 1.05f);
+
         if (connecting) {
             drawText("CONNECTING...", px + 30, py + 300, 1.5f);
         } else {
             // ボタンのヒント的な描画（判定は Launcher 側）
             renderButton(px + 30, py + 280, 210, 50, "CONNECT", 0.2f, 0.6f, 0.3f);
             renderButton(px + 260, py + 280, 210, 50, "LOCAL", 0.3f, 0.4f, 0.6f);
-            drawText("Press ENTER to Connect / ESC to Quit", px + 30, py + 360, 1.0f);
+            renderButton(px + 30, py + 340, 210, 50, "GRAPHICS", 0.35f, 0.45f, 0.25f);
+            drawText("Press ENTER to Connect / ESC to Quit", px + 30, py + 410, 1.0f);
         }
+    }
+
+    public void renderSettingsScreen(String title, boolean fsrEnabled, FsrPreset preset, float sharpness,
+            boolean inInitialSetup) {
+        glDisable(GL_DEPTH_TEST);
+        setup2D();
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glColor4f(0.03f, 0.05f, 0.04f, 1.0f);
+        glBegin(GL_QUADS);
+        glVertex2f(0, 0);
+        glVertex2f(windowWidth, 0);
+        glVertex2f(windowWidth, windowHeight);
+        glVertex2f(0, windowHeight);
+        glEnd();
+
+        float pW = 620.0f;
+        float pH = 420.0f;
+        float px = (windowWidth - pW) * 0.5f;
+        float py = (windowHeight - pH) * 0.5f;
+
+        glColor4f(0.02f, 0.04f, 0.02f, 0.95f);
+        glBegin(GL_QUADS);
+        glVertex2f(px, py);
+        glVertex2f(px + pW, py);
+        glVertex2f(px + pW, py + pH);
+        glVertex2f(px, py + pH);
+        glEnd();
+
+        glColor4f(0.2f, 0.8f, 0.35f, 0.9f);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(px, py);
+        glVertex2f(px + pW, py);
+        glVertex2f(px + pW, py + pH);
+        glVertex2f(px, py + pH);
+        glEnd();
+
+        drawText(title, px + 30, py + 50, 2.0f);
+        drawText("FSR RENDER OPTIONS", px + 30, py + 90, 1.2f);
+
+        renderButton(px + 30, py + 120, 180, 48, fsrEnabled ? "FSR: ON" : "FSR: OFF", fsrEnabled);
+        renderButton(px + 220, py + 120, 180, 48, "PRESET: " + preset.label(), false);
+
+        drawText("SHARPNESS", px + 30, py + 205, 1.15f);
+        renderButton(px + 30, py + 225, 60, 42, "-", false);
+        glColor3f(0.15f, 0.2f, 0.15f);
+        glBegin(GL_QUADS);
+        glVertex2f(px + 100, py + 225);
+        glVertex2f(px + 250, py + 225);
+        glVertex2f(px + 250, py + 267);
+        glVertex2f(px + 100, py + 267);
+        glEnd();
+        glColor3f(0.9f, 0.95f, 0.9f);
+        drawText(String.format("%.2f", sharpness), px + 150, py + 252, 1.15f);
+        renderButton(px + 260, py + 225, 60, 42, "+", false);
+
+        float scale = fsrEnabled && preset != null ? preset.renderScale() : 1.0f;
+        drawText(String.format("Internal Scale: %.0f%%", scale * 100.0f), px + 30, py + 305, 1.1f);
+        drawText("UI stays native, scene is rendered low-res and upscaled.", px + 30, py + 332, 1.0f);
+        drawText(inInitialSetup ? "ESC to return to deployment setup" : "ESC to close settings", px + 30, py + 360,
+                1.0f);
+
+        renderButton(px + pW - 180, py + pH - 68, 150, 48, "BACK", false);
     }
 
     private void renderInputField(float x, float y, float w, float h, String text, boolean active) {
@@ -1536,8 +1631,9 @@ public class GameRenderer {
         glVertex2f(cx - 100 + vol * 200, cy + 20);
         glVertex2f(cx - 100, cy + 20);
         glEnd();
-        renderButton(cx - 100, cy + 40, 200, 60, "RESUME", false);
-        renderButton(cx - 100, cy + 110, 200, 60, "QUIT", false);
+        renderButton(cx - 100, cy + 40, 200, 50, "SETTINGS", false);
+        renderButton(cx - 100, cy + 100, 200, 50, "RESUME", false);
+        renderButton(cx - 100, cy + 160, 200, 50, "QUIT", false);
     }
 
     private float terrainHeightAt(float x, float z) {
