@@ -1130,11 +1130,13 @@ public class GameRenderer {
         glDisable(GL_DEPTH_TEST);
         for (Effect e : effects) {
             if (e.type == Effect.Type.LASER) {
+                float startY = terrainHeightAt(e.x, e.y) + 0.5f; // 地形に合わせる
+                float endY = terrainHeightAt(e.tx, e.ty) + 0.5f;
                 glLineWidth(2.0f);
                 glColor4f(1, 1, 0, e.life);
                 glBegin(GL_LINES);
-                glVertex3f(e.x, 0.5f, e.y);
-                glVertex3f(e.tx, 0.5f, e.ty);
+                glVertex3f(e.x, startY, e.y);
+                glVertex3f(e.tx, endY, e.ty);
                 glEnd();
             } else if (e.type == Effect.Type.BUILD_COMPLETE) {
                 float radius = 1.5f + (1.0f - e.life) * 3.0f;
@@ -1209,7 +1211,6 @@ public class GameRenderer {
                 glVertex3f(0.0f, 0.0f, 0.0f);
                 glVertex3f(e.tx - e.x, 0.0f, e.ty - e.y);
                 glEnd();
-                glPopMatrix();
                 glPopMatrix();
             } else if (e.type == Effect.Type.SHIELD_HIT) {
                 float radius = 1.0f + (1.0f - e.life) * 4.0f; // Expand rapidly
