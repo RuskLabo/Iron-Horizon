@@ -28,7 +28,7 @@ public class UiBox extends UiContainer {
         // 枠線描画
         if (drawBorder) {
             glColor4f(borderR, borderG, borderB, borderA);
-            glLineWidth(borderWidth);
+            glLineWidth(borderWidth * uiScale);
             glBegin(GL_LINE_LOOP);
             glVertex2f(x, y);
             glVertex2f(x + width, y);
@@ -42,26 +42,47 @@ public class UiBox extends UiContainer {
 
     @Override
     public void updateLayout() {
-        // 子要素のサイズに基づいて自身のサイズを決定（もし固定サイズでなければ）
-        float prefW = 0;
-        float prefH = 0;
+        // まず子要素のスケールを同期させ、各要素の推奨サイズを確定させる
         for (UiElement child : children) {
-            if (!child.visible) continue;
-            prefW = Math.max(prefW, child.getPreferredWidth() + child.marginLeft + child.marginRight);
-            prefH = Math.max(prefH, child.getPreferredHeight() + child.marginTop + child.marginBottom);
-        }
-        
-        width = prefW + paddingLeft + paddingRight;
-        height = prefH + paddingTop + paddingBottom;
-
-        // 子要素の座標を自身のパディングに合わせて更新
-        for (UiElement child : children) {
-            if (!child.visible) continue;
-            child.x = x + paddingLeft + child.marginLeft;
-            child.y = y + paddingTop + child.marginTop;
-            child.width = child.getPreferredWidth();
-            child.height = child.getPreferredHeight();
+            child.setUiScale(uiScale);
             child.updateLayout();
+        }
+
+        // 自身のサイズ決定 (AUTOモード時のみ、推奨サイズで上書き)
+        if (widthMode == LayoutMode.AUTO) {
+            width = getPreferredWidth();
+        }
+        if (heightMode == LayoutMode.AUTO) {
+            height = getPreferredHeight();
+        }
+
+        // 有効な描画範囲（自身の枠内 - パディング）
+        float interiorW = width - (paddingLeft + paddingRight) * uiScale;
+        float interiorH = height - (paddingTop + paddingBottom) * uiScale;
+
+        // 子要素の座標をアライメントに合わせて更新
+        for (UiElement child : children) {
+            if (!child.visible) continue;
+
+            // 水平位置
+            float childWWithMargin = child.width + (child.marginLeft + child.marginRight) * uiScale;
+            if (child.horizontalAlign == HorizontalAlign.CENTER) {
+                child.x = x + (paddingLeft + child.marginLeft) * uiScale + (interiorW - childWWithMargin) / 2.0f;
+            } else if (child.horizontalAlign == HorizontalAlign.RIGHT) {
+                child.x = x + width - (paddingRight + child.marginRight) * uiScale - child.width;
+            } else {
+                child.x = x + (paddingLeft + child.marginLeft) * uiScale;
+            }
+
+            // 垂直位置
+            float childHWithMargin = child.height + (child.marginTop + child.marginBottom) * uiScale;
+            if (child.verticalAlign == VerticalAlign.MIDDLE) {
+                child.y = y + (paddingTop + child.marginTop) * uiScale + (interiorH - childHWithMargin) / 2.0f;
+            } else if (child.verticalAlign == VerticalAlign.BOTTOM) {
+                child.y = y + height - (paddingBottom + child.marginBottom) * uiScale - child.height;
+            } else {
+                child.y = y + (paddingTop + child.marginTop) * uiScale;
+            }
         }
     }
 
@@ -70,9 +91,9 @@ public class UiBox extends UiContainer {
         float maxChildW = 0;
         for (UiElement child : children) {
             if (!child.visible) continue;
-            maxChildW = Math.max(maxChildW, child.getPreferredWidth() + child.marginLeft + child.marginRight);
+            maxChildW = Math.max(maxChildW, child.getPreferredWidth() + (child.marginLeft + child.marginRight) * uiScale);
         }
-        return maxChildW + paddingLeft + paddingRight;
+        return maxChildW + (paddingLeft + paddingRight) * uiScale;
     }
 
     @Override
@@ -80,8 +101,8 @@ public class UiBox extends UiContainer {
         float maxChildH = 0;
         for (UiElement child : children) {
             if (!child.visible) continue;
-            maxChildH = Math.max(maxChildH, child.getPreferredHeight() + child.marginTop + child.marginBottom);
+            maxChildH = Math.max(maxChildH, child.getPreferredHeight() + (child.marginTop + child.marginBottom) * uiScale);
         }
-        return maxChildH + paddingTop + paddingBottom;
+        return maxChildH + (paddingTop + paddingBottom) * uiScale;
     }
 }

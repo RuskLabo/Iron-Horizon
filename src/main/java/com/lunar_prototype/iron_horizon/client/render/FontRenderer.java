@@ -17,6 +17,7 @@ import static org.lwjgl.stb.STBTruetype.stbtt_GetBakedQuad;
 public class FontRenderer implements AutoCloseable {
     private final int textureId;
     private final STBTTBakedChar.Buffer cdata;
+    private final STBTTAlignedQuad quad; // 再利用可能なクワッドオブジェクト
     private final float fontSize;
     private final int bitmapW;
     private final int bitmapH;
@@ -29,6 +30,7 @@ public class FontRenderer implements AutoCloseable {
         ByteBuffer ttf = loadResource(resourcePath);
         ByteBuffer bitmap = BufferUtils.createByteBuffer(bitmapW * bitmapH);
         this.cdata = STBTTBakedChar.malloc(96);
+        this.quad = STBTTAlignedQuad.malloc(); // 1回だけ確保
 
         stbtt_BakeFontBitmap(ttf, fontSize, bitmap, bitmapW, bitmapH, 32, cdata);
 
@@ -68,7 +70,9 @@ public class FontRenderer implements AutoCloseable {
         }
     }
 
-    public void drawText(String text, float x, float y, float r, float g, float b, float a, float scale) {
+    public synchronized void drawText(String text, float x, float y, float r, float g, float b, float a, float scale) {
+        if (text == null || text.isEmpty()) return;
+
         glPushMatrix();
         // STBTT は y 座標をベースラインとして扱うため、
         // 以前の STBEasyFont (上端基準) との互換性のためにオフセットを加える (0.75f は Arial のアセント比率に近い調整値)
@@ -84,44 +88,42 @@ public class FontRenderer implements AutoCloseable {
         glBegin(GL_QUADS);
         float[] xPos = {0};
         float[] yPos = {0};
-        STBTTAlignedQuad q = STBTTAlignedQuad.malloc();
 
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c < 32 || c >= 128) continue;
 
-            stbtt_GetBakedQuad(cdata, bitmapW, bitmapH, c - 32, xPos, yPos, q, true);
+            stbtt_GetBakedQuad(cdata, bitmapW, bitmapH, c - 32, xPos, yPos, quad, true);
             
-            glTexCoord2f(q.s0(), q.t0());
-            glVertex2f(q.x0(), q.y0());
+            glTexCoord2f(quad.s0(), quad.t0());
+            glVertex2f(quad.x0(), quad.y0());
             
-            glTexCoord2f(q.s1(), q.t0());
-            glVertex2f(q.x1(), q.y0());
+            glTexCoord2f(quad.s1(), quad.t0());
+            glVertex2f(quad.x1(), quad.y0());
             
-            glTexCoord2f(q.s1(), q.t1());
-            glVertex2f(q.x1(), q.y1());
+            glTexCoord2f(quad.s1(), quad.t1());
+            glVertex2f(quad.x1(), quad.y1());
             
-            glTexCoord2f(q.s0(), q.t1());
-            glVertex2f(q.x0(), q.y1());
+            glTexCoord2f(quad.s0(), quad.t1());
+            glVertex2f(quad.x0(), quad.y1());
         }
         glEnd();
-        q.free();
         glDisable(GL_TEXTURE_2D);
         glPopMatrix();
     }
 
-    public float getStringWidth(String text) {
+    public synchronized float getStringWidth(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        
         float width = 0;
         float[] xPos = {0};
         float[] yPos = {0};
-        STBTTAlignedQuad q = STBTTAlignedQuad.malloc();
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c < 32 || c >= 128) continue;
-            stbtt_GetBakedQuad(cdata, bitmapW, bitmapH, c - 32, xPos, yPos, q, true);
-            width = q.x1();
+            stbtt_GetBakedQuad(cdata, bitmapW, bitmapH, c - 32, xPos, yPos, quad, true);
+            width = quad.x1();
         }
-        q.free();
         return width;
     }
 
@@ -133,5 +135,6 @@ public class FontRenderer implements AutoCloseable {
     public void close() {
         glDeleteTextures(textureId);
         cdata.free();
+        quad.free();
     }
 }

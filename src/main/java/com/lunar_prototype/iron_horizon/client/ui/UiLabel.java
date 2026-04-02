@@ -23,7 +23,7 @@ public class UiLabel extends UiElement {
     @Override
     public void render() {
         if (!visible || text == null || text.isEmpty()) return;
-        font.drawText(text, x, y, r, g, b, a, scale);
+        font.drawText(text, x, y, r, g, b, a, scale * uiScale);
     }
 
     @Override
@@ -35,11 +35,11 @@ public class UiLabel extends UiElement {
     @Override
     public float getPreferredWidth() {
         if (text == null || text.isEmpty()) return 0;
-        return font.getStringWidth(text) * scale;
+        return font.getStringWidth(text) * scale * uiScale;
     }
 
     @Override
     public float getPreferredHeight() {
-        return font.getFontSize() * scale;
+        return font.getFontSize() * scale * uiScale;
     }
 }

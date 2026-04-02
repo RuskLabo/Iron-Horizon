@@ -9,4 +9,5 @@ public final class MapSettings {
     public static final float RESOURCE_GRID_SIZE = 8.0f;
     public static final float RESOURCE_GRID_MARGIN = 16.0f;
     public static final int TERRAIN_TEXTURE_SIZE = 256;
+    public static final int TERRAIN_SEED = 1337;
 }

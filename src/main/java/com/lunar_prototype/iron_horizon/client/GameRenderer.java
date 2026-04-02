@@ -15,12 +15,16 @@ import com.lunar_prototype.iron_horizon.client.render.TerrainMeshFactory;
 import com.lunar_prototype.iron_horizon.client.render.UiIconFactory;
 import com.lunar_prototype.iron_horizon.client.render.Texture;
 import com.lunar_prototype.iron_horizon.client.render.FontRenderer;
+import com.lunar_prototype.iron_horizon.client.util.DisplayMode;
 import com.lunar_prototype.iron_horizon.client.ui.*;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL;
+import org.lwjgl.stb.STBEasyFont;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -109,6 +113,7 @@ public class GameRenderer {
     private float yaw = -90;
     private double lastMouseX;
     private double lastMouseY;
+    private float currentUiScale = 1.0f;
     private boolean rightMouseDown = false;
     private int windowWidth = 1280;
     private int windowHeight = 720;
@@ -180,7 +185,7 @@ public class GameRenderer {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         fsrUpscaler.init();
-        refreshWindowSize();
+        syncWindowMetrics();
         glfwSetWindowSizeCallback(window, (win, width, height) -> {
             windowWidth = Math.max(1, width);
             windowHeight = Math.max(1, height);
@@ -400,6 +405,15 @@ public class GameRenderer {
         return terrainHeightAt(x, z);
     }
 
+    public Vector2f snapToBuildGrid(float worldX, float worldZ) {
+        float half = GRID_SIZE * 0.5f;
+        float snappedX = Math.round((worldX - half) / GRID_SIZE) * GRID_SIZE + half;
+        float snappedZ = Math.round((worldZ - half) / GRID_SIZE) * GRID_SIZE + half;
+        snappedX = clamp(snappedX, half, MapSettings.WORLD_SIZE - half);
+        snappedZ = clamp(snappedZ, half, MapSettings.WORLD_SIZE - half);
+        return new Vector2f(snappedX, snappedZ);
+    }
+
     public Vector3f getCameraPosition() {
         return new Vector3f(cameraPos);
     }
@@ -499,8 +513,8 @@ public class GameRenderer {
         }
     }
 
-    public void renderSettingsScreen(String title, boolean fsrEnabled, FsrPreset preset, float sharpness,
-            boolean inInitialSetup) {
+    public void renderSettingsScreen(String title, DisplayMode displayMode, boolean fsrEnabled, FsrPreset preset,
+            float sharpness, boolean inInitialSetup) {
         glDisable(GL_DEPTH_TEST);
         setup2D();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -514,7 +528,7 @@ public class GameRenderer {
         glEnd();
 
         float pW = 620.0f;
-        float pH = 420.0f;
+        float pH = 500.0f;
         float px = (windowWidth - pW) * 0.5f;
         float py = (windowHeight - pH) * 0.5f;
 
@@ -535,28 +549,29 @@ public class GameRenderer {
         glEnd();
 
         drawText(title, px + 30, py + 50, 2.0f);
-        drawText("FSR RENDER OPTIONS", px + 30, py + 90, 1.2f);
+        drawText("DISPLAY / FSR OPTIONS", px + 30, py + 90, 1.2f);
 
-        renderButton(px + 30, py + 120, 180, 48, fsrEnabled ? "FSR: ON" : "FSR: OFF", fsrEnabled);
-        renderButton(px + 220, py + 120, 180, 48, "PRESET: " + preset.label(), false);
+        renderButton(px + 30, py + 120, 370, 48, "DISPLAY MODE: " + displayMode.label(), false);
+        renderButton(px + 30, py + 180, 180, 48, fsrEnabled ? "FSR: ON" : "FSR: OFF", fsrEnabled);
+        renderButton(px + 220, py + 180, 180, 48, "PRESET: " + preset.label(), false);
 
-        drawText("SHARPNESS", px + 30, py + 205, 1.15f);
-        renderButton(px + 30, py + 225, 60, 42, "-", false);
+        drawText("SHARPNESS", px + 30, py + 262, 1.15f);
+        renderButton(px + 30, py + 285, 60, 42, "-", false);
         glColor3f(0.15f, 0.2f, 0.15f);
         glBegin(GL_QUADS);
-        glVertex2f(px + 100, py + 225);
-        glVertex2f(px + 250, py + 225);
-        glVertex2f(px + 250, py + 267);
-        glVertex2f(px + 100, py + 267);
+        glVertex2f(px + 100, py + 285);
+        glVertex2f(px + 250, py + 285);
+        glVertex2f(px + 250, py + 327);
+        glVertex2f(px + 100, py + 327);
         glEnd();
         glColor3f(0.9f, 0.95f, 0.9f);
-        drawText(String.format("%.2f", sharpness), px + 150, py + 252, 1.15f);
-        renderButton(px + 260, py + 225, 60, 42, "+", false);
+        drawText(String.format("%.2f", sharpness), px + 150, py + 309, 1.15f);
+        renderButton(px + 260, py + 285, 60, 42, "+", false);
 
         float scale = fsrEnabled && preset != null ? preset.renderScale() : 1.0f;
-        drawText(String.format("Internal Scale: %.0f%%", scale * 100.0f), px + 30, py + 305, 1.1f);
-        drawText("UI stays native, scene is rendered low-res and upscaled.", px + 30, py + 332, 1.0f);
-        drawText(inInitialSetup ? "ESC to return to deployment setup" : "ESC to close settings", px + 30, py + 360,
+        drawText(String.format("Internal Scale: %.0f%%", scale * 100.0f), px + 30, py + 362, 1.1f);
+        drawText("UI stays native, scene is rendered low-res and upscaled.", px + 30, py + 390, 1.0f);
+        drawText(inInitialSetup ? "ESC to return to deployment setup" : "ESC to close settings", px + 30, py + 418,
                 1.0f);
 
         renderButton(px + pW - 180, py + pH - 68, 150, 48, "BACK", false);
@@ -793,6 +808,7 @@ public class GameRenderer {
     }
 
     private void setup2D() {
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         glOrtho(0, windowWidth, windowHeight, 0, -1, 1);
@@ -1105,8 +1121,9 @@ public class GameRenderer {
         double[] y = new double[1];
         glfwGetCursorPos(window, x, y);
         Vector3f pos = getMouseWorldPos(x[0], y[0]);
-        float gx = (float) Math.floor(pos.x / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
-        float gz = (float) Math.floor(pos.z / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+        Vector2f snapped = snapToBuildGrid(pos.x, pos.z);
+        float gx = snapped.x;
+        float gz = snapped.y;
         glPushMatrix();
         glTranslatef(gx, terrainHeightAt(gx, gz) + 1.0f, gz);
         glColor4f(1, 1, 1, 0.5f);
@@ -1467,43 +1484,43 @@ public class GameRenderer {
                 }
             }
         }
-        List<String> tooltip = null;
-        if (cS) {
-            boolean hoverFactory = isInsideRect(mouseX, mouseY, 20, hudY + 10, 120, 60);
-            boolean hoverWall = isInsideRect(mouseX, mouseY, 150, hudY + 10, 120, 60);
-            boolean hoverExtractor = isInsideRect(mouseX, mouseY, 280, hudY + 10, 120, 60);
-            boolean hoverLaser = isInsideRect(mouseX, mouseY, 410, hudY + 10, 120, 60);
-            renderActionCard(20, hudY + 10, 120, 60, "FACTORY", getBuildingCost(Building.Type.FACTORY), factoryIcon,
-                    selectedBuildType == Building.Type.FACTORY, hoverFactory, null);
-            renderActionCard(150, hudY + 10, 120, 60, "WALL", getBuildingCost(Building.Type.WALL), wallIcon,
-                    selectedBuildType == Building.Type.WALL, hoverWall, null);
-            renderActionCard(280, hudY + 10, 120, 60, "EXTRACT", getBuildingCost(Building.Type.EXTRACTOR),
-                    extractorIcon, selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor, null);
-            renderActionCard(410, hudY + 10, 120, 60, "LASER", getBuildingCost(Building.Type.LASER_TOWER),
-                    laserTowerIcon, selectedBuildType == Building.Type.LASER_TOWER, hoverLaser, null);
-            if (hoverFactory)
-                tooltip = describeBuildingType(Building.Type.FACTORY);
-            else if (hoverWall)
-                tooltip = describeBuildingType(Building.Type.WALL);
+          List<String> tooltip = null;
+          if (cS) {
+              boolean hoverFactory = isInsideRect(mouseX, mouseY, 20, hudY + 10, 120, 60);
+              boolean hoverWall = isInsideRect(mouseX, mouseY, 150, hudY + 10, 120, 60);
+              boolean hoverExtractor = isInsideRect(mouseX, mouseY, 280, hudY + 10, 120, 60);
+              boolean hoverLaser = isInsideRect(mouseX, mouseY, 410, hudY + 10, 120, 60);
+              renderActionCardElement(20, hudY + 10, 120, 60, "FACTORY", getBuildingCost(Building.Type.FACTORY), factoryIcon,
+                      selectedBuildType == Building.Type.FACTORY, hoverFactory, null);
+              renderActionCardElement(150, hudY + 10, 120, 60, "WALL", getBuildingCost(Building.Type.WALL), wallIcon,
+                      selectedBuildType == Building.Type.WALL, hoverWall, null);
+              renderActionCardElement(280, hudY + 10, 120, 60, "EXTRACT", getBuildingCost(Building.Type.EXTRACTOR),
+                      extractorIcon, selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor, null);
+              renderActionCardElement(410, hudY + 10, 120, 60, "LASER", getBuildingCost(Building.Type.LASER_TOWER),
+                      laserTowerIcon, selectedBuildType == Building.Type.LASER_TOWER, hoverLaser, null);
+              if (hoverFactory)
+                  tooltip = describeBuildingType(Building.Type.FACTORY);
+              else if (hoverWall)
+                  tooltip = describeBuildingType(Building.Type.WALL);
             else if (hoverExtractor)
                 tooltip = describeBuildingType(Building.Type.EXTRACTOR);
             else if (hoverLaser)
                 tooltip = describeBuildingType(Building.Type.LASER_TOWER);
-        } else if (factory != null) {
-            boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
-            boolean hoverHound = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
-            boolean hoverBot = isInsideRect(mouseX, mouseY, 340, hudY + 10, 150, 60);
-            boolean hoverObelisk = isInsideRect(mouseX, mouseY, 500, hudY + 10, 150, 60);
-            renderActionCard(20, hudY + 10, 150, 60, "TANK", getUnitCost(Unit.Type.TANK), tankIcon, true, hoverTank,
-                    factory.productionQueue.isEmpty() ? null : "Q:" + factory.productionQueue.size());
-            renderActionCard(180, hudY + 10, 150, 60, "HOUND", getUnitCost(Unit.Type.HOUND), houndIcon, true,
-                    hoverHound, null);
-            renderActionCard(340, hudY + 10, 150, 60, "CONSTRUCTOR", getUnitCost(Unit.Type.CONSTRUCTOR),
-                    constructorIcon, true, hoverBot, null);
-            renderActionCard(500, hudY + 10, 150, 60, "OBELISK", getUnitCost(Unit.Type.OBELISK), obeliskIcon, true,
-                    hoverObelisk, null);
-            if (hoverTank)
-                tooltip = describeUnitType(Unit.Type.TANK);
+          } else if (factory != null) {
+              boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
+              boolean hoverHound = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
+              boolean hoverBot = isInsideRect(mouseX, mouseY, 340, hudY + 10, 150, 60);
+              boolean hoverObelisk = isInsideRect(mouseX, mouseY, 500, hudY + 10, 150, 60);
+              renderActionCardElement(20, hudY + 10, 150, 60, "TANK", getUnitCost(Unit.Type.TANK), tankIcon, true, hoverTank,
+                      factory.productionQueue.isEmpty() ? null : "Q:" + factory.productionQueue.size());
+              renderActionCardElement(180, hudY + 10, 150, 60, "HOUND", getUnitCost(Unit.Type.HOUND), houndIcon, true,
+                      hoverHound, null);
+              renderActionCardElement(340, hudY + 10, 150, 60, "CONSTRUCTOR", getUnitCost(Unit.Type.CONSTRUCTOR),
+                      constructorIcon, true, hoverBot, null);
+              renderActionCardElement(500, hudY + 10, 150, 60, "OBELISK", getUnitCost(Unit.Type.OBELISK), obeliskIcon, true,
+                      hoverObelisk, null);
+              if (hoverTank)
+                  tooltip = describeUnitType(Unit.Type.TANK);
             else if (hoverHound)
                 tooltip = describeUnitType(Unit.Type.HOUND);
             else if (hoverBot)
@@ -1525,116 +1542,195 @@ public class GameRenderer {
 
     private void renderActionCard(float x, float y, float width, float height, String label, int cost, Texture icon,
             boolean active, boolean hovered, String badgeText) {
+        if (System.nanoTime() >= 0) {
+        glColor4f(0, 0, 0, 0.40f);
+        glBegin(GL_QUADS);
+        glVertex2f(x + 4, y + 5);
+        glVertex2f(x + width + 4, y + 5);
+        glVertex2f(x + width + 4, y + height + 5);
+        glVertex2f(x + 4, y + height + 5);
+        glEnd();
+
+        if (active) {
+            glColor3f(0.16f, 0.58f, 0.26f);
+        } else if (hovered) {
+            glColor3f(0.22f, 0.28f, 0.22f);
+        } else {
+            glColor3f(0.14f, 0.18f, 0.14f);
+        }
+        glBegin(GL_QUADS);
+        glVertex2f(x, y);
+        glVertex2f(x + width, y);
+        glVertex2f(x + width, y + height);
+        glVertex2f(x, y + height);
+        glEnd();
+
+        glColor4f(0.34f, 0.85f, 0.45f, 0.90f);
+        glLineWidth(2);
+        glBegin(GL_LINE_LOOP);
+        glVertex2f(x, y);
+        glVertex2f(x + width, y);
+        glVertex2f(x + width, y + height);
+        glVertex2f(x, y + height);
+        glEnd();
+
+        if (icon != null) {
+            float iconSize = height - 16.0f;
+            drawTexture(icon, x + 6.0f, y + 8.0f, iconSize, iconSize);
+        }
+
+        glColor4f(0.06f, 0.08f, 0.06f, 0.85f);
+        glBegin(GL_QUADS);
+        glVertex2f(x + 6.0f, y + height - 20.0f);
+        glVertex2f(x + width - 6.0f, y + height - 20.0f);
+        glVertex2f(x + width - 6.0f, y + height - 4.0f);
+        glVertex2f(x + 6.0f, y + height - 4.0f);
+        glEnd();
+        glColor3f(0.93f, 0.98f, 0.93f);
+        drawText(label, x + 56.0f, y + 32.0f, label.length() > 8 ? 0.92f : 1.05f);
+
+        glColor4f(0.06f, 0.08f, 0.06f, 0.85f);
+        glBegin(GL_QUADS);
+        glVertex2f(x + width - 50.0f, y + 8.0f);
+        glVertex2f(x + width - 8.0f, y + 8.0f);
+        glVertex2f(x + width - 8.0f, y + 24.0f);
+        glVertex2f(x + width - 50.0f, y + 24.0f);
+        glEnd();
+        glColor3f(0.90f, 0.95f, 0.90f);
+        drawText(String.valueOf(cost), x + width - 40.0f, y + 20.0f, 0.95f);
+
+        if (badgeText != null && !badgeText.isEmpty()) {
+            glColor4f(0.08f, 0.12f, 0.08f, 0.90f);
+            glBegin(GL_QUADS);
+            glVertex2f(x + width - 50.0f, y + height - 18.0f);
+            glVertex2f(x + width - 8.0f, y + height - 18.0f);
+            glVertex2f(x + width - 8.0f, y + height - 3.0f);
+            glVertex2f(x + width - 50.0f, y + height - 3.0f);
+            glEnd();
+            glColor3f(0.8f, 0.95f, 0.82f);
+            drawText(badgeText, x + width - 43.0f, y + height - 5.0f, 0.80f);
+        }
+        return;
+        }
+
         UiBox root = new UiBox();
+        root.setUiScale(currentUiScale);
         root.x = x;
         root.y = y;
         root.width = width;
         root.height = height;
+        root.widthMode = UiElement.LayoutMode.FIXED;
+        root.heightMode = UiElement.LayoutMode.FIXED;
         root.setPadding(6);
         root.drawBorder = true;
 
         if (active) {
-            root.bgR = 0.16f;
-            root.bgG = 0.58f;
-            root.bgB = 0.26f;
+            root.bgR = 0.16f; root.bgG = 0.58f; root.bgB = 0.26f;
         } else if (hovered) {
-            root.bgR = 0.22f;
-            root.bgG = 0.28f;
-            root.bgB = 0.22f;
+            root.bgR = 0.22f; root.bgG = 0.28f; root.bgB = 0.22f;
         } else {
-            root.bgR = 0.14f;
-            root.bgG = 0.18f;
-            root.bgB = 0.14f;
+            root.bgR = 0.14f; root.bgG = 0.18f; root.bgB = 0.14f;
         }
         root.bgA = 0.92f;
-        root.borderR = 0.34f;
-        root.borderG = 0.85f;
-        root.borderB = 0.45f;
+        root.borderR = 0.34f; root.borderG = 0.85f; root.borderB = 0.45f;
         root.borderA = 0.90f;
 
         // メインの内容（アイコンとラベル）を横に並べるスタック
         UiStack mainStack = new UiStack(UiStack.Orientation.HORIZONTAL);
         mainStack.spacing = 10;
+        mainStack.horizontalAlign = UiElement.HorizontalAlign.CENTER; // 追加
+        mainStack.verticalAlign = UiElement.VerticalAlign.MIDDLE;
         root.addChild(mainStack);
 
-        // アイコン（あれば）
+        // アイコン
         if (icon != null) {
             float iconSize = height - 16.0f;
-            // UiIconコンポーネントがないので直接描画するか、専用のコンポーネントを作る必要があるが
-            // ここでは簡易的な描き込み（renderメソッドをオーバーライドしたUiElement）を使用
             mainStack.addChild(new UiElement() {
-                @Override
-                public void render() {
-                    drawTexture(icon, x, y, width, height);
-                }
-
-                @Override
-                public void updateLayout() {
-                }
-
-                @Override
-                public float getPreferredWidth() {
-                    return iconSize;
-                }
-
-                @Override
-                public float getPreferredHeight() {
-                    return iconSize;
-                }
+                @Override public void render() { drawTexture(icon, this.x, this.y, this.width, this.height); }
+                @Override public void updateLayout() {}
+                @Override public float getPreferredWidth() { return iconSize * uiScale; }
+                @Override public float getPreferredHeight() { return iconSize * uiScale; }
             });
         }
 
         // ラベル
         UiLabel uiLabel = new UiLabel(label, fontRenderer);
-        uiLabel.scale = label.length() > 8 ? 1.05f : 1.25f;
+        uiLabel.scale = (label.length() > 8 ? 0.9f : 1.1f);
         uiLabel.setColor(0.93f, 0.98f, 0.93f, 1.0f);
-        uiLabel.marginTop = 12; // ラベルを中央寄りに調整
+        uiLabel.verticalAlign = UiElement.VerticalAlign.MIDDLE; // 追加
         mainStack.addChild(uiLabel);
+
+        // コストバッジを右上に配置
+        UiBox costPanel = new UiBox();
+        costPanel.bgR = 0.06f; costPanel.bgG = 0.08f; costPanel.bgB = 0.06f; costPanel.bgA = 0.8f;
+        costPanel.drawBorder = false;
+        costPanel.setPadding(3);
+        costPanel.horizontalAlign = UiElement.HorizontalAlign.RIGHT;
+        costPanel.verticalAlign = UiElement.VerticalAlign.TOP;
+        costPanel.marginRight = 4;
+        costPanel.marginTop = 4;
+        
+        UiLabel costLabel = new UiLabel(String.valueOf(cost), fontRenderer);
+        costLabel.scale = 0.85f;
+        costLabel.setColor(0.9f, 0.95f, 0.9f, 1.0f);
+        costPanel.addChild(costLabel);
+        root.addChild(costPanel);
+
+        // キューバッジを右下に配置
+        if (badgeText != null && !badgeText.isEmpty()) {
+            UiBox badgePanel = new UiBox();
+            badgePanel.bgR = 0.08f; badgePanel.bgG = 0.12f; badgePanel.bgB = 0.08f; badgePanel.bgA = 0.9f;
+            badgePanel.drawBorder = false;
+            badgePanel.setPadding(3);
+            badgePanel.horizontalAlign = UiElement.HorizontalAlign.RIGHT;
+            badgePanel.verticalAlign = UiElement.VerticalAlign.BOTTOM;
+            badgePanel.marginRight = 4;
+            badgePanel.marginBottom = 4;
+
+            UiLabel badgeLabel = new UiLabel(badgeText, fontRenderer);
+            badgeLabel.scale = 0.75f;
+            badgeLabel.setColor(0.8f, 0.95f, 0.82f, 1.0f);
+            badgePanel.addChild(badgeLabel);
+            root.addChild(badgePanel);
+        }
 
         root.updateLayout();
         root.render();
-
-        // コストバッジ（右上固定配置なので既存のメソッドを利用しつつ座標を整備）
-        glColor4f(0.06f, 0.08f, 0.06f, 0.8f);
-        glBegin(GL_QUADS);
-        glVertex2f(x + width - 54, y + 8);
-        glVertex2f(x + width - 8, y + 8);
-        glVertex2f(x + width - 8, y + 25);
-        glVertex2f(x + width - 54, y + 25);
-        glEnd();
-        glColor3f(0.9f, 0.95f, 0.9f);
-        drawText(String.valueOf(cost), x + width - 40, y + 8.0f, 1.05f); // y座標はdrawText内部で調整されるため 8.0f に
-
-        // バッジテキスト（生産キュー等）
+        if (icon != null) {
+            float iconSize = height - 16.0f;
+            drawTexture(icon, x + 6.0f, y + 8.0f, iconSize, iconSize);
+        }
+        drawText(String.valueOf(cost), x + width - 44, y + 21, 1.05f);
         if (badgeText != null && !badgeText.isEmpty()) {
-            glColor4f(0.08f, 0.12f, 0.08f, 0.9f);
-            glBegin(GL_QUADS);
-            glVertex2f(x + width - 50, y + height - 18);
-            glVertex2f(x + width - 8, y + height - 18);
-            glVertex2f(x + width - 8, y + height - 3);
-            glVertex2f(x + width - 50, y + height - 3);
-            glEnd();
-            glColor3f(0.8f, 0.95f, 0.82f);
-            drawText(badgeText, x + width - 38, y + height - 15.0f, 0.85f);
+            drawText(badgeText, x + width - 44, y + height - 5, 0.85f);
         }
     }
 
+    private void renderActionCardElement(float x, float y, float width, float height, String label, int cost, Texture icon,
+            boolean active, boolean hovered, String badgeText) {
+        UiActionCard card = new UiActionCard(fontRenderer, icon, label, cost, badgeText);
+        card.x = x;
+        card.y = y;
+        card.width = width;
+        card.height = height;
+        card.active = active;
+        card.hovered = hovered;
+        card.setUiScale(currentUiScale);
+        card.render();
+    }
+
     private void drawTexture(Texture texture, float x, float y, float width, float height) {
-        if (texture == null) {
-            return;
-        }
+        if (texture == null) return;
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, texture.id());
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
         glBegin(GL_QUADS);
-        glTexCoord2f(0, 1);
-        glVertex2f(x, y);
-        glTexCoord2f(1, 1);
-        glVertex2f(x + width, y);
-        glTexCoord2f(1, 0);
-        glVertex2f(x + width, y + height);
-        glTexCoord2f(0, 0);
-        glVertex2f(x, y + height);
+        glTexCoord2f(0, 0); glVertex2f(x, y);
+        glTexCoord2f(1, 0); glVertex2f(x + width, y);
+        glTexCoord2f(1, 1); glVertex2f(x + width, y + height);
+        glTexCoord2f(0, 1); glVertex2f(x, y + height);
         glEnd();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
@@ -1688,7 +1784,7 @@ public class GameRenderer {
         return Math.max(min, Math.min(max, value));
     }
 
-    private void refreshWindowSize() {
+    public void syncWindowMetrics() {
         int[] windowWidthOut = new int[1];
         int[] windowHeightOut = new int[1];
         int[] framebufferWidthOut = new int[1];
@@ -1697,8 +1793,12 @@ public class GameRenderer {
         glfwGetFramebufferSize(window, framebufferWidthOut, framebufferHeightOut);
         windowWidth = Math.max(1, windowWidthOut[0]);
         windowHeight = Math.max(1, windowHeightOut[0]);
-        framebufferWidth = Math.max(1, framebufferWidthOut[0]);
         framebufferHeight = Math.max(1, framebufferHeightOut[0]);
+
+        // 1280x720 を基準解像度として UI スケールを算出
+        float scaleW = windowWidth / 1280.0f;
+        float scaleH = windowHeight / 720.0f;
+        currentUiScale = Math.min(scaleW, scaleH);
     }
 
     private void renderButton(float x, float y, float width, float height, String label, boolean active) {
@@ -1734,7 +1834,11 @@ public class GameRenderer {
         glVertex2f(x + width, y + height);
         glVertex2f(x, y + height);
         glEnd();
-        drawText(label, x + 12, y + 35, 1.45f);
+        float textScale = 1.45f;
+        float textWidth = label.length() * 12.0f * textScale;
+        float textX = x + Math.max(0.0f, (width - textWidth) / 2.0f);
+        float textY = y + Math.max(0.0f, (height - 16.0f * textScale) / 2.0f) + 1.0f;
+        drawText(label, textX, textY, textScale);
     }
 
     private boolean isInsideRect(float x, float y, float rectX, float rectY, float rectW, float rectH) {
@@ -1944,7 +2048,24 @@ public class GameRenderer {
     }
 
     private void drawText(String text, float x, float y, float scale) {
-        if (text == null || text.isEmpty() || fontRenderer == null) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        if (fontRenderer == null) {
+            ByteBuffer buffer = BufferUtils.createByteBuffer(text.length() * 270);
+            int vertices = STBEasyFont.stb_easy_font_print(0, 0, text, null, buffer);
+            glPushMatrix();
+            glTranslatef(x, y, 0);
+            glScalef(scale, scale, 1);
+            glDisable(GL_TEXTURE_2D);
+            glEnableClientState(GL_VERTEX_ARRAY);
+            glEnableClientState(GL_COLOR_ARRAY);
+            glVertexPointer(2, GL_FLOAT, 16, buffer);
+            glColorPointer(4, GL_UNSIGNED_BYTE, 16, buffer);
+            glDrawArrays(GL_QUADS, 0, vertices * 4);
+            glDisableClientState(GL_COLOR_ARRAY);
+            glDisableClientState(GL_VERTEX_ARRAY);
+            glPopMatrix();
             return;
         }
         float[] color = new float[4];

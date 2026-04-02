@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.Properties;
 
 import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
+import com.lunar_prototype.iron_horizon.client.util.DisplayMode;
 
 public class ConfigManager {
     private static final String CONFIG_FILE = System.getProperty("user.home") + File.separator + ".iron_horizon" + File.separator + "config.properties";
@@ -55,6 +56,19 @@ public class ConfigManager {
     
     public boolean hasInitialConfig() {
         return properties.containsKey("server.ip") && properties.containsKey("username");
+    }
+
+    public DisplayMode getDisplayMode() {
+        String stored = properties.getProperty("display.mode", DisplayMode.WINDOWED.name());
+        try {
+            return DisplayMode.valueOf(stored);
+        } catch (IllegalArgumentException ex) {
+            return DisplayMode.WINDOWED;
+        }
+    }
+
+    public void setDisplayMode(DisplayMode mode) {
+        properties.setProperty("display.mode", mode.name());
     }
 
     public boolean isFsrEnabled() {

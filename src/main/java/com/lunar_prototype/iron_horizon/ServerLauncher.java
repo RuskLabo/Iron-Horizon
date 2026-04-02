@@ -88,20 +88,25 @@ public class ServerLauncher {
                             }
                             if (!onPatch) return;
                         }
-                        Building b = new Building(idCounter++, cmd.buildingType, cmd.x, cmd.y, teamId, pid);
-                        gameState.addBuilding(b);
-                        Unit constructor = gameState.units.get(cmd.constructorUnitId);
-                        if (constructor != null) {
-                            Network.Task task = new Network.Task(); task.type = Network.Task.Type.BUILD; task.x = b.position.x; task.y = b.position.y; task.targetBuildingId = b.id;
-                            if (!cmd.shiftHold) {
-                                constructor.tasks.clear();
-                                constructor.targetBuildingId = b.id;
-                                constructor.targetPosition.set(b.position);
-                                constructor.manualMoveOrder = true;
-                            } else {
-                                constructor.tasks.add(task);
-                            }
-                        }
+                          Building b = new Building(idCounter++, cmd.buildingType, cmd.x, cmd.y, teamId, pid);
+                          gameState.addBuilding(b);
+                          Unit constructor = gameState.units.get(cmd.constructorUnitId);
+                          if (constructor != null) {
+                              Network.Task task = new Network.Task(); task.type = Network.Task.Type.BUILD; task.x = b.position.x; task.y = b.position.y; task.targetBuildingId = b.id;
+                              synchronized (constructor.tasks) {
+                                  if (!cmd.shiftHold) {
+                                      constructor.tasks.clear();
+                                      constructor.targetBuildingId = b.id;
+                                      constructor.targetPosition.set(b.position);
+                                      constructor.manualMoveOrder = true;
+                                  } else {
+                                      constructor.tasks.add(task);
+                                      if (constructor.targetBuildingId == null && constructor.targetUnitId == null && constructor.attackTargetBuildingId == null) {
+                                          startNextQueuedTask(constructor);
+                                      }
+                                  }
+                              }
+                          }
                     } else if (object instanceof Network.ProduceCommand) {
                         Network.ProduceCommand cmd = (Network.ProduceCommand) object;
                         Building factory = gameState.buildings.get(cmd.factoryId);
@@ -112,41 +117,48 @@ public class ServerLauncher {
                         Network.MoveCommand cmd = (Network.MoveCommand) object;
                         for (Integer id : cmd.unitIds) {
                             Unit unit = gameState.units.get(id);
-                            if (unit != null && unit.teamId == teamId) {
-                                if (!cmd.queue) {
-                                    unit.tasks.clear();
-                                    unit.targetUnitId = null;
-                                    unit.attackTargetBuildingId = null;
-                                    unit.targetBuildingId = null;
-                                }
-                                if (cmd.waypoints != null && !cmd.waypoints.isEmpty()) {
-                                    Vector2f first = cmd.waypoints.get(0);
-                                    unit.targetPosition.set(first.x, first.y);
-                                    unit.manualMoveOrder = true;
-                                    for (int i = 1; i < cmd.waypoints.size(); i++) {
-                                        Vector2f wp = cmd.waypoints.get(i);
-                                        Network.Task task = new Network.Task();
-                                        task.type = Network.Task.Type.MOVE;
-                                        task.x = wp.x;
-                                        task.y = wp.y;
-                                        unit.tasks.add(task);
-                                    }
-                                } else {
-                                    unit.targetPosition.set(cmd.targetX, cmd.targetY);
-                                    unit.manualMoveOrder = true;
+                              if (unit != null && unit.teamId == teamId) {
+                                  if (!cmd.queue) {
+                                      synchronized (unit.tasks) {
+                                          unit.tasks.clear();
+                                      }
+                                      unit.targetUnitId = null;
+                                      unit.attackTargetBuildingId = null;
+                                      unit.targetBuildingId = null;
+                                  }
+                                  if (cmd.waypoints != null && !cmd.waypoints.isEmpty()) {
+                                      Vector2f first = cmd.waypoints.get(0);
+                                      unit.targetPosition.set(first.x, first.y);
+                                      unit.manualMoveOrder = true;
+                                      synchronized (unit.tasks) {
+                                          for (int i = 1; i < cmd.waypoints.size(); i++) {
+                                              Vector2f wp = cmd.waypoints.get(i);
+                                              Network.Task task = new Network.Task();
+                                              task.type = Network.Task.Type.MOVE;
+                                              task.x = wp.x;
+                                              task.y = wp.y;
+                                              unit.tasks.add(task);
+                                          }
+                                      }
+                                  } else {
+                                      unit.targetPosition.set(cmd.targetX, cmd.targetY);
+                                      unit.manualMoveOrder = true;
                                 }
                             }
                         }
                     } else if (object instanceof Network.AttackCommand) {
                         Network.AttackCommand cmd = (Network.AttackCommand) object;
-                        for (Integer id : cmd.unitIds) {
-                            Unit unit = gameState.units.get(id);
-                            if (unit != null && unit.teamId == teamId) {
-                                unit.targetUnitId = cmd.targetUnitId; unit.attackTargetBuildingId = cmd.targetBuildingId;
-                                unit.targetBuildingId = null; unit.tasks.clear();
-                            }
-                        }
-                    }
+                          for (Integer id : cmd.unitIds) {
+                              Unit unit = gameState.units.get(id);
+                              if (unit != null && unit.teamId == teamId) {
+                                  unit.targetUnitId = cmd.targetUnitId; unit.attackTargetBuildingId = cmd.targetBuildingId;
+                                  unit.targetBuildingId = null;
+                                  synchronized (unit.tasks) {
+                                      unit.tasks.clear();
+                                  }
+                              }
+                          }
+                      }
                 }
                 if (object instanceof Network.ViewportUpdate) { clientViewports.put(pid, (Network.ViewportUpdate) object); }
             }
@@ -429,24 +441,30 @@ public class ServerLauncher {
                     }
                 }
             }
-            if (u.targetBuildingId != null) {
-                Building b = gameState.buildings.get(u.targetBuildingId);
-                if (b == null || b.isComplete) { u.targetBuildingId = null; startNextQueuedTask(u); }
-            }
-            if (u.targetBuildingId == null && u.targetUnitId == null && u.attackTargetBuildingId == null && !u.tasks.isEmpty()) {
-                if (u.position.distance(u.targetPosition) <= 0.5f) startNextQueuedTask(u);
-            }
-        }
+                  if (u.targetBuildingId != null) {
+                      Building b = gameState.buildings.get(u.targetBuildingId);
+                      if (b == null || b.isComplete) { u.targetBuildingId = null; }
+                  }
+                  if (u.targetBuildingId == null && u.targetUnitId == null && u.attackTargetBuildingId == null) {
+                      synchronized (u.tasks) {
+                          if (!u.tasks.isEmpty() && u.position.distance(u.targetPosition) <= 0.5f) {
+                              startNextQueuedTask(u);
+                          }
+                      }
+                  }
+              }
         Iterator<Map.Entry<Integer, Building>> bIter = gameState.buildings.entrySet().iterator();
         while (bIter.hasNext()) { Building b = bIter.next().getValue(); if (b.hp <= 0 && b.type != Building.Type.METAL_PATCH) { addCombatEvent(Network.CombatEvent.Type.EXPLOSION, b.position.x, b.position.y, 0, 0); bIter.remove(); } }
     }
 
-    private void startNextQueuedTask(Unit u) {
-        if (u.tasks.isEmpty()) return;
-        Network.Task next = u.tasks.remove(0);
-        if (next.type == Network.Task.Type.MOVE) { u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
-        else if (next.type == Network.Task.Type.BUILD) { u.targetBuildingId = next.targetBuildingId; u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
-    }
+      private void startNextQueuedTask(Unit u) {
+          synchronized (u.tasks) {
+              if (u.tasks.isEmpty()) return;
+              Network.Task next = u.tasks.remove(0);
+              if (next.type == Network.Task.Type.MOVE) { u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
+              else if (next.type == Network.Task.Type.BUILD) { u.targetBuildingId = next.targetBuildingId; u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
+          }
+      }
 
     private void checkWinCondition() {
         boolean n1 = false, n2 = false;
@@ -518,18 +536,20 @@ public class ServerLauncher {
 
                 // ユニットの差分抽出
                 Map<Integer, Network.UnitData> currentUnits = new HashMap<>();
-                for (Unit unit : gameState.units.values()) {
-                    Network.UnitData data = new Network.UnitData();
-                    data.id = unit.id; data.type = unit.type; data.teamId = unit.teamId; data.ownerId = unit.ownerId;
-                    data.x = unit.position.x; data.y = unit.position.y; data.hp = unit.hp; data.maxHp = unit.maxHp; data.facingDeg = unit.facingDeg;
-                    data.tasks.addAll(unit.tasks);
-                    currentUnits.put(unit.id, data);
+                  for (Unit unit : gameState.units.values()) {
+                      Network.UnitData data = new Network.UnitData();
+                      data.id = unit.id; data.type = unit.type; data.teamId = unit.teamId; data.ownerId = unit.ownerId;
+                      data.x = unit.position.x; data.y = unit.position.y; data.hp = unit.hp; data.maxHp = unit.maxHp; data.facingDeg = unit.facingDeg;
+                      synchronized (unit.tasks) {
+                          data.tasks.addAll(unit.tasks);
+                      }
+                      currentUnits.put(unit.id, data);
 
                     Network.UnitData last = sync.lastUnits.get(unit.id);
-                    boolean changed = fullSync || last == null ||
-                        Math.abs(last.x - data.x) > 0.05f || Math.abs(last.y - data.y) > 0.05f ||
-                        Math.abs(last.hp - data.hp) > 1.0f || last.facingDeg != data.facingDeg ||
-                        last.tasks.size() != data.tasks.size();
+                      boolean changed = fullSync || last == null ||
+                          Math.abs(last.x - data.x) > 0.05f || Math.abs(last.y - data.y) > 0.05f ||
+                          Math.abs(last.hp - data.hp) > 1.0f || last.facingDeg != data.facingDeg ||
+                          last.tasks.size() != data.tasks.size();
 
                     if (changed) update.units.add(data);
                 }

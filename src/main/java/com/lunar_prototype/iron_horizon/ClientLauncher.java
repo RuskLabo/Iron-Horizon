@@ -6,6 +6,7 @@ import com.esotericsoftware.kryonet.Listener;
 import com.lunar_prototype.iron_horizon.client.GameRenderer;
 import com.lunar_prototype.iron_horizon.client.SoundManager;
 import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
+import com.lunar_prototype.iron_horizon.client.util.DisplayMode;
 import com.lunar_prototype.iron_horizon.common.Network;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
@@ -13,6 +14,7 @@ import com.lunar_prototype.iron_horizon.common.model.Unit;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.glfw.GLFWVidMode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -68,9 +70,14 @@ public class ClientLauncher {
     private boolean settingsOpen = false;
     private SettingsContext settingsContext = SettingsContext.INITIAL_SETUP;
     private final ConfigManager configManager = new ConfigManager();
+    private DisplayMode displayMode;
     private boolean fsrEnabled;
     private FsrPreset fsrPreset;
     private float fsrSharpness;
+    private int windowedX = 100;
+    private int windowedY = 100;
+    private int windowedWidth = 1280;
+    private int windowedHeight = 720;
     private String inputServerIp = "";
     private String inputUsername = "";
     private int activeField = 0; // 0: IP, 1: Username
@@ -121,10 +128,13 @@ public class ClientLauncher {
                 projectileData,
                 localUnitTargets);
 
+        displayMode = configManager.getDisplayMode();
         fsrEnabled = configManager.isFsrEnabled();
         fsrPreset = configManager.getFsrPreset();
         fsrSharpness = configManager.getFsrSharpness();
+        applyDisplayMode(displayMode, false);
         renderer.setFsrSettings(fsrEnabled, fsrPreset, fsrSharpness);
+        renderer.syncWindowMetrics();
 
         inputServerIp = configManager.getServerIp();
         inputUsername = configManager.getUsername();
@@ -315,12 +325,35 @@ public class ClientLauncher {
         settingsOpen = false;
     }
 
-    private void applyRenderSettings() {
-        renderer.setFsrSettings(fsrEnabled, fsrPreset, fsrSharpness);
+    private void rememberWindowedGeometry() {
+        int[] x = new int[1];
+        int[] y = new int[1];
+        int[] w = new int[1];
+        int[] h = new int[1];
+        glfwGetWindowPos(window, x, y);
+        glfwGetWindowSize(window, w, h);
+        windowedX = x[0];
+        windowedY = y[0];
+        windowedWidth = Math.max(1, w[0]);
+        windowedHeight = Math.max(1, h[0]);
+    }
+
+    private void persistGraphicsSettings() {
+        configManager.setDisplayMode(displayMode);
         configManager.setFsrEnabled(fsrEnabled);
         configManager.setFsrPreset(fsrPreset);
         configManager.setFsrSharpness(fsrSharpness);
         configManager.save();
+    }
+
+    private void applyRenderSettings() {
+        renderer.setFsrSettings(fsrEnabled, fsrPreset, fsrSharpness);
+        persistGraphicsSettings();
+    }
+
+    private void cycleDisplayMode() {
+        DisplayMode next = displayMode.next();
+        applyDisplayMode(next, true);
     }
 
     private void adjustSharpness(float delta) {
@@ -346,21 +379,83 @@ public class ClientLauncher {
         applyRenderSettings();
     }
 
+    private boolean applyDisplayMode(DisplayMode mode, boolean persist) {
+        if (mode == null) {
+            mode = DisplayMode.WINDOWED;
+        }
+        if (displayMode == DisplayMode.WINDOWED) {
+            rememberWindowedGeometry();
+        }
+
+        boolean applied = true;
+        GLFWVidMode videoMode = null;
+        long monitor = glfwGetPrimaryMonitor();
+        int[] monitorX = new int[1];
+        int[] monitorY = new int[1];
+        glfwGetMonitorPos(monitor, monitorX, monitorY);
+
+        try {
+            switch (mode) {
+                case WINDOWED -> {
+                    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+                    glfwSetWindowMonitor(window, NULL, windowedX, windowedY, windowedWidth, windowedHeight, GLFW_DONT_CARE);
+                }
+                case BORDERLESS -> {
+                    videoMode = glfwGetVideoMode(monitor);
+                    if (videoMode == null) {
+                        applied = false;
+                        break;
+                    }
+                    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+                    glfwSetWindowMonitor(window, NULL, monitorX[0], monitorY[0], videoMode.width(), videoMode.height(),
+                            GLFW_DONT_CARE);
+                }
+                case FULLSCREEN -> {
+                    videoMode = glfwGetVideoMode(monitor);
+                    if (videoMode == null) {
+                        applied = false;
+                        break;
+                    }
+                    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+                    glfwSetWindowMonitor(window, monitor, 0, 0, videoMode.width(), videoMode.height(),
+                            videoMode.refreshRate());
+                }
+            }
+        } catch (Exception e) {
+            applied = false;
+        }
+
+        if (!applied) {
+            mode = DisplayMode.WINDOWED;
+            glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+            glfwSetWindowMonitor(window, NULL, windowedX, windowedY, windowedWidth, windowedHeight, GLFW_DONT_CARE);
+        }
+
+        displayMode = mode;
+        renderer.syncWindowMetrics();
+        if (persist) {
+            persistGraphicsSettings();
+        }
+        return applied;
+    }
+
     private void checkSettingsClick(double x, double y) {
         int[] w = new int[1], h = new int[1];
         glfwGetWindowSize(window, w, h);
         float pW = 620.0f;
-        float pH = 420.0f;
+        float pH = 500.0f;
         float px = (w[0] - pW) * 0.5f;
         float py = (h[0] - pH) * 0.5f;
 
-        if (x > px + 30 && x < px + 210 && y > py + 120 && y < py + 168) {
+        if (x > px + 30 && x < px + 400 && y > py + 120 && y < py + 168) {
+            cycleDisplayMode();
+        } else if (x > px + 30 && x < px + 210 && y > py + 180 && y < py + 228) {
             toggleFsr();
-        } else if (x > px + 220 && x < px + 400 && y > py + 120 && y < py + 168) {
+        } else if (x > px + 220 && x < px + 400 && y > py + 180 && y < py + 228) {
             cyclePreset();
-        } else if (x > px + 30 && x < px + 90 && y > py + 225 && y < py + 267) {
+        } else if (x > px + 30 && x < px + 90 && y > py + 285 && y < py + 327) {
             adjustSharpness(-0.05f);
-        } else if (x > px + 260 && x < px + 320 && y > py + 225 && y < py + 267) {
+        } else if (x > px + 260 && x < px + 320 && y > py + 285 && y < py + 327) {
             adjustSharpness(0.05f);
         } else if (x > px + pW - 180 && x < px + pW - 30 && y > py + pH - 68 && y < py + pH - 20) {
             closeSettings();
@@ -389,7 +484,7 @@ public class ClientLauncher {
 
     private void renderLoadingFrame() {
         if (settingsOpen && settingsContext == SettingsContext.INITIAL_SETUP) {
-            renderer.renderSettingsScreen("GRAPHICS SETTINGS", fsrEnabled, fsrPreset, fsrSharpness, true);
+            renderer.renderSettingsScreen("GRAPHICS SETTINGS", displayMode, fsrEnabled, fsrPreset, fsrSharpness, true);
         } else if (loadingPhase == LoadingPhase.INITIAL_SETUP) {
             renderer.renderInitialSetupScreen(inputServerIp, inputUsername, activeField, isConnecting);
         } else if (loadingPhase == LoadingPhase.LOAD_ASSETS) {
@@ -686,8 +781,9 @@ public class ClientLauncher {
         }
         if (constructorId == null) return;
         Vector3f pos = renderer.getMouseWorldPos(x, y);
-        float gx = (float) Math.floor(pos.x / 2.0f) * 2.0f + 1.0f;
-        float gz = (float) Math.floor(pos.z / 2.0f) * 2.0f + 1.0f;
+        Vector2f snapped = renderer.snapToBuildGrid(pos.x, pos.z);
+        float gx = snapped.x;
+        float gz = snapped.y;
         soundManager.playSound("build");
         Network.BuildCommand cmd = new Network.BuildCommand();
         cmd.buildingType = selectedBuildType;
@@ -869,13 +965,13 @@ public class ClientLauncher {
                 glfwSwapBuffers(window);
                 glfwPollEvents();
                 advanceLoadingPhase();
-                continue;
-            }
-            if (settingsOpen) {
-                renderer.renderSettingsScreen("GRAPHICS SETTINGS", fsrEnabled, fsrPreset, fsrSharpness, false);
-                glfwSwapBuffers(window);
-                glfwPollEvents();
-                continue;
+            continue;
+        }
+        if (settingsOpen) {
+            renderer.renderSettingsScreen("GRAPHICS SETTINGS", displayMode, fsrEnabled, fsrPreset, fsrSharpness, false);
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+            continue;
             }
             if (!isMenuOpen) {
                 handleInput(dt);
