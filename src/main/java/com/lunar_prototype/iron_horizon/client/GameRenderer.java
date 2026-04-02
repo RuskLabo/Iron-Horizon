@@ -1826,40 +1826,75 @@ public class GameRenderer {
     private void renderMenu() {
         float cx = windowWidth / 2.0f;
         float cy = windowHeight / 2.0f;
-        glColor4f(0.03f, 0.06f, 0.04f, 0.92f);
-        glBegin(GL_QUADS);
-        glVertex2f(cx - 150, cy - 150);
-        glVertex2f(cx + 150, cy - 150);
-        glVertex2f(cx + 150, cy + 200);
-        glVertex2f(cx - 150, cy + 200);
-        glEnd();
-        glColor4f(0.2f, 0.8f, 0.35f, 0.35f);
-        glBegin(GL_QUADS);
-        glVertex2f(cx - 150, cy - 150);
-        glVertex2f(cx + 150, cy - 150);
-        glVertex2f(cx + 150, cy - 146);
-        glVertex2f(cx - 150, cy - 146);
-        glEnd();
-        drawText("PAUSE MENU", cx - 80, cy - 120, 2.0f);
-        drawText("VOLUME:", cx - 130, cy - 40, 1.5f);
-        glColor3f(0.3f, 0.3f, 0.3f);
-        glBegin(GL_QUADS);
-        glVertex2f(cx - 100, cy);
-        glVertex2f(cx + 100, cy);
-        glVertex2f(cx + 100, cy + 20);
-        glVertex2f(cx - 100, cy + 20);
-        glEnd();
+
+        UiBox root = new UiBox();
+        root.setUiScale(currentUiScale);
+        root.width = 320 * currentUiScale;
+        root.heightMode = UiElement.LayoutMode.AUTO;
+        root.widthMode = UiElement.LayoutMode.FIXED;
+        root.x = cx - root.width / 2.0f;
+        root.y = cy - 200 * currentUiScale;
+        root.setPadding(20);
+        root.bgR = 0.03f; root.bgG = 0.06f; root.bgB = 0.04f; root.bgA = 0.92f;
+        root.borderR = 0.2f; root.borderG = 0.8f; root.borderB = 0.35f; root.borderA = 0.35f;
+
+        UiStack stack = new UiStack(UiStack.Orientation.VERTICAL);
+        stack.spacing = 15;
+        stack.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+
+        UiLabel title = new UiLabel("PAUSE MENU", fontRenderer);
+        title.scale = 2.0f;
+        title.setColor(0.2f, 0.8f, 0.35f, 1.0f);
+        title.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+        title.setMargin(10);
+        stack.addChild(title);
+
+        UiLabel volLabel = new UiLabel("VOLUME:", fontRenderer);
+        volLabel.scale = 1.2f;
+        volLabel.horizontalAlign = UiElement.HorizontalAlign.LEFT;
+        stack.addChild(volLabel);
+
+        // Volume bar container
+        UiBox volBox = new UiBox();
+        volBox.width = 240 * currentUiScale;
+        volBox.height = 24 * currentUiScale;
+        volBox.widthMode = UiElement.LayoutMode.FIXED;
+        volBox.heightMode = UiElement.LayoutMode.FIXED;
+        volBox.bgR = 0.15f; volBox.bgG = 0.15f; volBox.bgB = 0.15f;
+        volBox.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+        
         float vol = soundManager.getMasterVolume();
-        glColor3f(0.4f, 0.8f, 0.4f);
-        glBegin(GL_QUADS);
-        glVertex2f(cx - 100, cy);
-        glVertex2f(cx - 100 + vol * 200, cy);
-        glVertex2f(cx - 100 + vol * 200, cy + 20);
-        glVertex2f(cx - 100, cy + 20);
-        glEnd();
-        renderButton(cx - 100, cy + 40, 200, 50, "SETTINGS", false);
-        renderButton(cx - 100, cy + 100, 200, 50, "RESUME", false);
-        renderButton(cx - 100, cy + 160, 200, 50, "QUIT", false);
+        UiBox volFill = new UiBox();
+        volFill.width = (240 * currentUiScale) * vol;
+        volFill.height = 24 * currentUiScale;
+        volFill.widthMode = UiElement.LayoutMode.FIXED;
+        volFill.heightMode = UiElement.LayoutMode.FIXED;
+        volFill.bgR = 0.34f; volFill.bgG = 0.85f; volFill.bgB = 0.45f;
+        volFill.drawBorder = false;
+        volBox.addChild(volFill);
+        stack.addChild(volBox);
+
+        UiButton settingsBtn = new UiButton(fontRenderer, "SETTINGS");
+        settingsBtn.width = 240 * currentUiScale;
+        settingsBtn.height = 50 * currentUiScale;
+        settingsBtn.hovered = settingsBtn.isMouseOver(mouseX, mouseY);
+        stack.addChild(settingsBtn);
+
+        UiButton resumeBtn = new UiButton(fontRenderer, "RESUME");
+        resumeBtn.width = 240 * currentUiScale;
+        resumeBtn.height = 50 * currentUiScale;
+        resumeBtn.hovered = resumeBtn.isMouseOver(mouseX, mouseY);
+        stack.addChild(resumeBtn);
+
+        UiButton quitBtn = new UiButton(fontRenderer, "QUIT");
+        quitBtn.width = 240 * currentUiScale;
+        quitBtn.height = 50 * currentUiScale;
+        quitBtn.hovered = quitBtn.isMouseOver(mouseX, mouseY);
+        stack.addChild(quitBtn);
+
+        root.addChild(stack);
+        root.updateLayout();
+        root.render();
     }
 
     private float terrainHeightAt(float x, float z) {
@@ -1886,6 +1921,10 @@ public class GameRenderer {
         float scaleW = windowWidth / 1280.0f;
         float scaleH = windowHeight / 720.0f;
         currentUiScale = Math.min(scaleW, scaleH);
+    }
+
+    public float getCurrentUiScale() {
+        return currentUiScale;
     }
 
     private void renderButton(float x, float y, float width, float height, String label, boolean active) {

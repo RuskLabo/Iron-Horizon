@@ -641,15 +641,46 @@ public class ClientLauncher {
         glfwGetWindowSize(window, w, h);
         float cx = w[0] / 2.0f;
         float cy = h[0] / 2.0f;
-        if (x > cx - 100 && x < cx + 100 && y > cy && y < cy + 20) {
-            float vol = (float) ((x - (cx - 100)) / 200.0);
+        
+        // Use the same scale and positioning as in GameRenderer.renderMenu
+        float scale = renderer.getCurrentUiScale();
+        float menuWidth = 320 * scale;
+        float contentWidth = 240 * scale;
+        float menuX = cx - menuWidth / 2.0f;
+        float contentX = cx - contentWidth / 2.0f;
+        float startY = cy - 200 * scale;
+        
+        // The stack and padding shifts things down
+        // Padding (20) + Title (height ~32 + margin 10) + VolLabel (height ~20) + Spacing (15 * 2)
+        // This is an approximation, but better than before.
+        float currentY = startY + (20 + 32 + 10 + 20 + 15 * 2) * scale;
+        
+        // Volume bar
+        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 24 * scale) {
+            float vol = (float) ((x - contentX) / contentWidth);
             soundManager.setMasterVolume(vol);
         }
-        if (x > cx - 100 && x < cx + 100 && y > cy + 40 && y < cy + 90) {
+        
+        currentY += (24 + 15) * scale; // Volume bar + spacing
+        
+        // Settings Button
+        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
             openSettings(SettingsContext.PAUSE_MENU);
         }
-        if (x > cx - 100 && x < cx + 100 && y > cy + 100 && y < cy + 150) isMenuOpen = false;
-        if (x > cx - 100 && x < cx + 100 && y > cy + 160 && y < cy + 210) glfwSetWindowShouldClose(window, true);
+        
+        currentY += (50 + 15) * scale; // Settings + spacing
+        
+        // Resume Button
+        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
+            isMenuOpen = false;
+        }
+        
+        currentY += (50 + 15) * scale; // Resume + spacing
+        
+        // Quit Button
+        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
+            glfwSetWindowShouldClose(window, true);
+        }
     }
 
     private boolean checkUIClick(double x, double y) {

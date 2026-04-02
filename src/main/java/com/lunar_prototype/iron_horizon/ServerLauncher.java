@@ -72,6 +72,14 @@ public class ServerLauncher {
                     connectionTeams.put(pid, assignedTeamId);
                     connectionNames.put(assignedTeamId, ((Network.LoginRequest) object).username != null ? ((Network.LoginRequest) object).username : "Player " + assignedTeamId);
                     
+                    // Transfer ownership of team-shared initial assets to the first player who joins
+                    for (Building b : gameState.buildings.values()) {
+                        if (b.teamId == assignedTeamId && b.ownerId == 0) b.ownerId = pid;
+                    }
+                    for (Unit u : gameState.units.values()) {
+                        if (u.teamId == assignedTeamId && u.ownerId == 0) u.ownerId = pid;
+                    }
+
                     // Initialize player resources
                     gameState.playerMetal.put(pid, 1000.0f);
                     gameState.playerEnergy.put(pid, 1000.0f);
@@ -344,9 +352,20 @@ public class ServerLauncher {
         
         // Generator Energy Income
         for (Building b : gameState.buildings.values()) {
-            if (b.isComplete && b.energyIncome > 0 && b.ownerId != 0) {
-                playerEnergyIncome.put(b.ownerId, playerEnergyIncome.getOrDefault(b.ownerId, 0f) + b.energyIncome);
-                gameState.playerEnergyCapacity.put(b.ownerId, gameState.playerEnergyCapacity.getOrDefault(b.ownerId, 1000f) + 400.0f);
+            if (b.isComplete && b.energyIncome > 0) {
+                int owner = b.ownerId;
+                if (owner == 0 && b.teamId != 0) {
+                    // Fallback to team players if owner is not set
+                    for (Map.Entry<Integer, Integer> entry : connectionTeams.entrySet()) {
+                        if (entry.getValue() == b.teamId) { owner = entry.getKey(); break; }
+                    }
+                    if (owner == 0 && b.teamId == 2) owner = AI_PLAYER_ID;
+                }
+                
+                if (owner != 0) {
+                    playerEnergyIncome.put(owner, playerEnergyIncome.getOrDefault(owner, 0f) + b.energyIncome);
+                    gameState.playerEnergyCapacity.put(owner, gameState.playerEnergyCapacity.getOrDefault(owner, 1000f) + 400.0f);
+                }
             }
         }
 
