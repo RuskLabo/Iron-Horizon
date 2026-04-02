@@ -13,6 +13,12 @@ public class GameState {
     public Map<Integer, Float> playerIncome = new ConcurrentHashMap<>();
     public Map<Integer, Float> playerDrain = new ConcurrentHashMap<>();
     
+    // Player-specific energy resources
+    public Map<Integer, Float> playerEnergy = new ConcurrentHashMap<>();
+    public Map<Integer, Float> playerEnergyCapacity = new ConcurrentHashMap<>();
+    public Map<Integer, Float> playerEnergyIncome = new ConcurrentHashMap<>();
+    public Map<Integer, Float> playerEnergyDrain = new ConcurrentHashMap<>();
+    
     public boolean isStarted = false;
     public int winnerTeamId = 0;
     public Map<Integer, String> teamNames = new ConcurrentHashMap<>();
@@ -22,6 +28,10 @@ public class GameState {
 
     public float getMetal(int playerId) {
         return playerMetal.getOrDefault(playerId, 0.0f);
+    }
+
+    public float getEnergy(int playerId) {
+        return playerEnergy.getOrDefault(playerId, 0.0f);
     }
 
     public void addUnit(Unit unit) {

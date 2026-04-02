@@ -34,6 +34,8 @@ public class ServerLauncher {
     
     public final Map<Integer, Float> playerIncome = new ConcurrentHashMap<>();
     public final Map<Integer, Float> playerDrain = new ConcurrentHashMap<>();
+    public final Map<Integer, Float> playerEnergyIncome = new ConcurrentHashMap<>();
+    public final Map<Integer, Float> playerEnergyDrain = new ConcurrentHashMap<>();
     
     // 差分更新用の状態管理
     private static class ClientSyncState {
@@ -72,6 +74,7 @@ public class ServerLauncher {
                     
                     // Initialize player resources
                     gameState.playerMetal.put(pid, 1000.0f);
+                    gameState.playerEnergy.put(pid, 1000.0f);
                     
                     Network.LoginResponse response = new Network.LoginResponse();
                     response.accepted = true; response.teamId = assignedTeamId;
@@ -175,6 +178,7 @@ public class ServerLauncher {
 
         // Initialize AI resources
         gameState.playerMetal.put(AI_PLAYER_ID, 1000.0f);
+        gameState.playerEnergy.put(AI_PLAYER_ID, 1000.0f);
 
         server.start(); server.bind(Network.TCP_PORT, Network.UDP_PORT); startSimulation();
     }
@@ -239,6 +243,90 @@ public class ServerLauncher {
         simulationThread.start();
     }
 
+    private Map<Integer, Float> computeOverdriveMultipliers() {
+        Map<Integer, Float> multipliers = new HashMap<>();
+        List<Building> nodes = new ArrayList<>();
+        for (Building b : gameState.buildings.values()) {
+            if (b.isComplete && (b.type == Building.Type.EXTRACTOR || b.energyIncome > 0)) nodes.add(b);
+        }
+        float connectionRadius = 35.0f;
+        boolean[] visited = new boolean[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            if (!visited[i]) {
+                List<Building> grid = new ArrayList<>();
+                List<Integer> queue = new ArrayList<>();
+                queue.add(i); visited[i] = true;
+                while (!queue.isEmpty()) {
+                    int currIdx = queue.remove(0);
+                    Building curr = nodes.get(currIdx);
+                    grid.add(curr);
+                    for (int j = 0; j < nodes.size(); j++) {
+                        if (!visited[j]) {
+                            Building next = nodes.get(j);
+                            if (curr.ownerId == next.ownerId && curr.position.distance(next.position) <= connectionRadius) {
+                                visited[j] = true; queue.add(j);
+                            }
+                        }
+                    }
+                }
+                float gridEnergy = 0f;
+                int extractorCount = 0;
+                for (Building b : grid) {
+                    if (b.energyIncome > 0) gridEnergy += b.energyIncome;
+                    if (b.type == Building.Type.EXTRACTOR) extractorCount++;
+                }
+                float bonus = 1.0f;
+                if (gridEnergy > 0 && extractorCount > 0) {
+                    bonus += ((float) Math.sqrt(gridEnergy / extractorCount)) / 4.0f;
+                }
+                for (Building b : grid) {
+                    if (b.type == Building.Type.EXTRACTOR) multipliers.put(b.id, bonus);
+                }
+            }
+        }
+        return multipliers;
+    }
+
+    private Vector2f getCircleIntersection(Vector2f p1, Vector2f p2, Vector2f center, float radius) {
+        Vector2f d = new Vector2f(p2.x - p1.x, p2.y - p1.y);
+        Vector2f f = new Vector2f(p1.x - center.x, p1.y - center.y);
+        float a = d.dot(d);
+        float b = 2 * f.dot(d);
+        float c = f.dot(f) - radius * radius;
+        float discriminant = b * b - 4 * a * c;
+        if (discriminant >= 0) {
+            discriminant = (float) Math.sqrt(discriminant);
+            float t1 = (-b - discriminant) / (2 * a);
+            float t2 = (-b + discriminant) / (2 * a);
+            if (t1 >= 0 && t1 <= 1) return new Vector2f(p1.x + t1 * d.x, p1.y + t1 * d.y);
+            if (t2 >= 0 && t2 <= 1) return new Vector2f(p1.x + t2 * d.x, p1.y + t2 * d.y);
+        }
+        return new Vector2f(p2);
+    }
+
+    private float applyDamageWithShield(float sx, float sy, float tx, float ty, int teamId, float damage, Vector2f hitPosOut) {
+        hitPosOut.set(tx, ty);
+        float remainingDamage = damage;
+        for (Building b : gameState.buildings.values()) {
+            if (b.teamId == teamId && b.type == Building.Type.SHIELD_GENERATOR && b.isComplete && b.shieldHp > 0) {
+                if (b.position.distance(new Vector2f(tx, ty)) <= b.shieldRadius) {
+                    Vector2f intersect = getCircleIntersection(new Vector2f(sx, sy), new Vector2f(tx, ty), b.position, b.shieldRadius);
+                    hitPosOut.set(intersect); // Target hits the shield surface
+                    addCombatEvent(Network.CombatEvent.Type.SHIELD_HIT, intersect.x, intersect.y, 0, 0);
+                    
+                    if (b.shieldHp >= remainingDamage) {
+                        b.shieldHp -= remainingDamage;
+                        return 0; // Fully blocked
+                    } else {
+                        remainingDamage -= b.shieldHp;
+                        b.shieldHp = 0;
+                    }
+                }
+            }
+        }
+        return remainingDamage;
+    }
+
     private void processGameLogic(float dt) {
         team2AI.update(gameState, dt, playerIncome, playerDrain);
         
@@ -248,7 +336,21 @@ public class ServerLauncher {
         // Base income for all players
         for (Integer pid : gameState.playerMetal.keySet()) {
             playerIncome.put(pid, 10.0f);
+            gameState.playerEnergyCapacity.put(pid, 1000.0f); // Base capacity
         }
+        
+        playerEnergyIncome.clear();
+        playerEnergyDrain.clear();
+        
+        // Generator Energy Income
+        for (Building b : gameState.buildings.values()) {
+            if (b.isComplete && b.energyIncome > 0 && b.ownerId != 0) {
+                playerEnergyIncome.put(b.ownerId, playerEnergyIncome.getOrDefault(b.ownerId, 0f) + b.energyIncome);
+                gameState.playerEnergyCapacity.put(b.ownerId, gameState.playerEnergyCapacity.getOrDefault(b.ownerId, 1000f) + 400.0f);
+            }
+        }
+
+        Map<Integer, Float> overdriveMultipliers = computeOverdriveMultipliers();
 
         // Extractor income and cost drain
         for (Building b : gameState.buildings.values()) {
@@ -257,7 +359,24 @@ public class ServerLauncher {
             if (owner == 0) continue; // Skip team-shared (Nexus) for individual income calculation
 
             if (b.type == Building.Type.EXTRACTOR && b.isComplete) {
-                playerIncome.put(owner, playerIncome.getOrDefault(owner, 0f) + 15.0f);
+                float multiplier = overdriveMultipliers.getOrDefault(b.id, 1.0f);
+                float actualIncome = 15.0f * multiplier;
+                
+                if (multiplier > 1.0f && gameState.getEnergy(owner) <= 0) {
+                    actualIncome = 15.0f; // Disable if no energy
+                } else if (multiplier > 1.0f) {
+                    float overdriveDrain = (multiplier - 1.0f) * 15.0f; 
+                    playerEnergyDrain.put(owner, playerEnergyDrain.getOrDefault(owner, 0f) + overdriveDrain);
+                }
+                playerIncome.put(owner, playerIncome.getOrDefault(owner, 0f) + actualIncome);
+            }
+
+            if (b.type == Building.Type.SHIELD_GENERATOR && b.isComplete) {
+                if (b.shieldHp < b.maxShieldHp && gameState.getEnergy(owner) > 0) {
+                    float heal = 100.0f * dt;
+                    b.shieldHp = Math.min(b.maxShieldHp, b.shieldHp + heal);
+                    playerEnergyDrain.put(owner, playerEnergyDrain.getOrDefault(owner, 0f) + (heal * 0.4f) / dt);
+                }
             }
 
             if (!b.isComplete) {
@@ -278,6 +397,14 @@ public class ServerLauncher {
             float efficiency = 1.0f;
             if (drn > 0 && currentMetal <= 0 && inc < drn) efficiency = inc / drn;
             gameState.playerMetal.put(pid, Math.max(0, currentMetal + (inc - drn * efficiency) * dt));
+            
+            float eInc = playerEnergyIncome.getOrDefault(pid, 0f);
+            float eDrn = playerEnergyDrain.getOrDefault(pid, 0f);
+            float currentEnergy = gameState.getEnergy(pid);
+            float maxCap = gameState.playerEnergyCapacity.getOrDefault(pid, 1000f);
+            float eEff = 1.0f;
+            if (eDrn > 0 && currentEnergy <= 0 && eInc < eDrn) eEff = eInc / eDrn;
+            gameState.playerEnergy.put(pid, Math.min(maxCap, Math.max(0, currentEnergy + (eInc - eDrn * eEff) * dt)));
 
             // Individual build/production logic
             for (Building b : gameState.buildings.values()) {
@@ -319,9 +446,15 @@ public class ServerLauncher {
                             .min((a, c) -> Float.compare(a.position.distance(b.position), c.position.distance(b.position)))
                             .orElse(null);
                     if (target != null) {
-                        target.hp -= b.attackDamage;
-                        addCombatEvent(Network.CombatEvent.Type.LASER, b.position.x, b.position.y, target.position.x, target.position.y);
-                        b.attackTimer = b.attackCooldown;
+                        float energyCost = 50.0f;
+                        if (gameState.getEnergy(b.ownerId) >= energyCost) {
+                            gameState.playerEnergy.put(b.ownerId, gameState.playerEnergy.get(b.ownerId) - energyCost);
+                            Vector2f hitPos = new Vector2f();
+                            float dmg = applyDamageWithShield(b.position.x, b.position.y, target.position.x, target.position.y, target.teamId, b.attackDamage, hitPos);
+                            if (dmg > 0) target.hp -= dmg;
+                            addCombatEvent(Network.CombatEvent.Type.LASER, b.position.x, b.position.y, hitPos.x, hitPos.y);
+                            b.attackTimer = b.attackCooldown;
+                        }
                     }
                 }
             }
@@ -371,16 +504,25 @@ public class ServerLauncher {
         for (Unit enemy : gameState.units.values()) {
             if (enemy.teamId == attacker.teamId) continue;
             float dist = enemy.position.distance(new Vector2f(impactX, impactY));
-            if (dist <= directRadius) enemy.hp -= directDamage;
-            else if (dist <= splashRadius) {
+            if (dist <= directRadius) {
+                Vector2f hitPos = new Vector2f();
+                float dmg = applyDamageWithShield(attacker.position.x, attacker.position.y, enemy.position.x, enemy.position.y, enemy.teamId, directDamage, hitPos);
+                if (dmg > 0) enemy.hp -= dmg;
+            } else if (dist <= splashRadius) {
                 float falloff = 1.0f - ((dist - directRadius) / Math.max(0.001f, splashRadius - directRadius));
-                enemy.hp -= splashDamage * Math.max(0.25f, falloff);
+                Vector2f hitPos = new Vector2f();
+                float dmg = applyDamageWithShield(attacker.position.x, attacker.position.y, enemy.position.x, enemy.position.y, enemy.teamId, splashDamage * Math.max(0.25f, falloff), hitPos);
+                if (dmg > 0) enemy.hp -= dmg;
             }
         }
         for (Building building : gameState.buildings.values()) {
             if (building.teamId == attacker.teamId || building.type == Building.Type.METAL_PATCH) continue;
             float dist = building.position.distance(new Vector2f(impactX, impactY));
-            if (dist <= splashRadius) building.hp -= splashDamage * 0.6f;
+            if (dist <= splashRadius) {
+                Vector2f hitPos = new Vector2f();
+                float dmg = applyDamageWithShield(attacker.position.x, attacker.position.y, building.position.x, building.position.y, building.teamId, splashDamage * 0.6f, hitPos);
+                if (dmg > 0) building.hp -= dmg;
+            }
         }
     }
 
@@ -390,8 +532,24 @@ public class ServerLauncher {
             Projectile p = pIter.next().getValue(); p.update(dt);
             if (p.life <= 0) { pIter.remove(); continue; }
             boolean hit = false;
-            for (Unit u : gameState.units.values()) { if (u.teamId != p.teamId && u.position.distance(p.position) < u.radius + 1.0f) { u.hp -= p.damage; hit = true; break; } }
-            if (!hit) { for (Building b : gameState.buildings.values()) { if (b.teamId != p.teamId && b.type != Building.Type.METAL_PATCH && b.position.distance(p.position) < b.collisionRadius) { b.hp -= p.damage; hit = true; break; } } }
+            for (Unit u : gameState.units.values()) { 
+                if (u.teamId != p.teamId && u.position.distance(p.position) < u.radius + 1.0f) { 
+                    Vector2f hitPos = new Vector2f();
+                    float dmg = applyDamageWithShield(p.position.x - p.velocity.x * dt, p.position.y - p.velocity.y * dt, u.position.x, u.position.y, u.teamId, p.damage, hitPos);
+                    if (dmg > 0) u.hp -= dmg; 
+                    hit = true; break; 
+                } 
+            }
+            if (!hit) { 
+                for (Building b : gameState.buildings.values()) { 
+                    if (b.teamId != p.teamId && b.type != Building.Type.METAL_PATCH && b.position.distance(p.position) < b.collisionRadius) { 
+                        Vector2f hitPos = new Vector2f();
+                        float dmg = applyDamageWithShield(p.position.x - p.velocity.x * dt, p.position.y - p.velocity.y * dt, b.position.x, b.position.y, b.teamId, p.damage, hitPos);
+                        if (dmg > 0) b.hp -= dmg; 
+                        hit = true; break; 
+                    } 
+                } 
+            }
             if (hit) pIter.remove();
         }
     }
@@ -546,6 +704,10 @@ public class ServerLauncher {
                 update.playerMetal.putAll(gameState.playerMetal);
                 update.playerIncome.putAll(playerIncome);
                 update.playerDrain.putAll(playerDrain);
+                update.playerEnergy.putAll(gameState.playerEnergy);
+                update.playerEnergyCapacity.putAll(gameState.playerEnergyCapacity);
+                update.playerEnergyIncome.putAll(playerEnergyIncome);
+                update.playerEnergyDrain.putAll(playerEnergyDrain);
                 update.teamNames.putAll(connectionNames);
                 update.teamNames.put(2, "AI Faction");
                 update.events.addAll(pendingEvents);
@@ -585,6 +747,7 @@ public class ServerLauncher {
                     bd.id = b.id; bd.type = b.type; bd.teamId = b.teamId; bd.ownerId = b.ownerId; bd.x = b.position.x; bd.y = b.position.y;
                     bd.hp = b.hp; bd.maxHp = b.maxHp; bd.buildProgress = b.buildProgress;
                     bd.productionProgress = b.productionTimer; bd.isComplete = b.isComplete;
+                    bd.shieldHp = b.shieldHp; bd.maxShieldHp = b.maxShieldHp; bd.shieldRadius = b.shieldRadius;
                     bd.productionQueue.addAll(b.productionQueue);
                     currentBuildings.put(b.id, bd);
 

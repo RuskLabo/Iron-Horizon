@@ -69,6 +69,10 @@ public class Network {
         public Map<Integer, Float> playerMetal = new HashMap<>();
         public Map<Integer, Float> playerIncome = new HashMap<>();
         public Map<Integer, Float> playerDrain = new HashMap<>();
+        public Map<Integer, Float> playerEnergy = new HashMap<>();
+        public Map<Integer, Float> playerEnergyCapacity = new HashMap<>();
+        public Map<Integer, Float> playerEnergyIncome = new HashMap<>();
+        public Map<Integer, Float> playerEnergyDrain = new HashMap<>();
         public Map<Integer, String> teamNames = new HashMap<>();
         public List<CombatEvent> events = new ArrayList<>();
         public List<Integer> removedUnitIds = new ArrayList<>();
@@ -87,7 +91,7 @@ public class Network {
     public static class StartGameCommand {}
 
     public static class CombatEvent {
-        public enum Type { ATTACK, EXPLOSION, LASER, OBELISK_BLAST }
+        public enum Type { ATTACK, EXPLOSION, LASER, OBELISK_BLAST, SHIELD_HIT }
         public Type type;
         public float x, y, tx, ty; // Source and Target pos
     }
@@ -120,6 +124,9 @@ public class Network {
         public float buildProgress;
         public float productionProgress;
         public boolean isComplete;
+        public float shieldHp;
+        public float maxShieldHp;
+        public float shieldRadius;
         public List<Unit.Type> productionQueue = new ArrayList<>();
     }
 

@@ -614,6 +614,8 @@ public class ClientLauncher {
                                 effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.EXPLOSION, e.x, e.y, 0, 0));
                             } else if (e.type == Network.CombatEvent.Type.OBELISK_BLAST) {
                                 effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.OBELISK_BLAST, e.x, e.y, e.tx, e.ty));
+                            } else if (e.type == Network.CombatEvent.Type.SHIELD_HIT) {
+                                effects.add(new GameRenderer.Effect(GameRenderer.Effect.Type.SHIELD_HIT, e.x, e.y, 0, 0));
                             }
                             combatMarkers.add(new GameRenderer.CombatMarker(e.x, e.y));
                         }
@@ -685,6 +687,8 @@ public class ClientLauncher {
             else if (x > 150 && x < 270) selectedBuildType = Building.Type.WALL;
             else if (x > 280 && x < 400) selectedBuildType = Building.Type.EXTRACTOR;
             else if (x > 410 && x < 530) selectedBuildType = Building.Type.LASER_TOWER;
+            else if (x > 540 && x < 660) selectedBuildType = Building.Type.SOLAR_COLLECTOR;
+            else if (x > 670 && x < 790) selectedBuildType = Building.Type.SHIELD_GENERATOR;
         } else if (factorySelected) {
             if (x > 20 && x < 170) sendProduceCommand(factoryId, Unit.Type.TANK);
             else if (x > 180 && x < 330) sendProduceCommand(factoryId, Unit.Type.HOUND);

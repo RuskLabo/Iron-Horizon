@@ -57,7 +57,7 @@ public class GameRenderer {
 
     public static class Effect {
         public enum Type {
-            LASER, EXPLOSION, BUILD_COMPLETE, OBELISK_BLAST
+            LASER, EXPLOSION, BUILD_COMPLETE, OBELISK_BLAST, SHIELD_HIT
         }
 
         public Type type;
@@ -98,6 +98,10 @@ public class GameRenderer {
     private Texture houndIcon;
     private Texture constructorIcon;
     private Texture obeliskIcon;
+    private Texture solarIcon;
+    private Texture shieldIcon;
+    private Mesh solarMesh;
+    private Mesh shieldMesh;
     private final Map<Integer, Texture> houndTextures = new HashMap<>();
     private final Map<Integer, Texture> obeliskTextures = new HashMap<>();
     private final Map<Integer, Float> unitFacingAngles = new HashMap<>();
@@ -247,6 +251,10 @@ public class GameRenderer {
         houndIcon = UiIconFactory.createUnitIcon(Unit.Type.HOUND);
         constructorIcon = UiIconFactory.createUnitIcon(Unit.Type.CONSTRUCTOR);
         obeliskIcon = UiIconFactory.createUnitIcon(Unit.Type.OBELISK);
+        solarIcon = UiIconFactory.createBuildingIcon(Building.Type.SOLAR_COLLECTOR);
+        shieldIcon = UiIconFactory.createBuildingIcon(Building.Type.SHIELD_GENERATOR);
+        try { solarMesh = ObjLoader.loadFromResource(GameRenderer.class, "/model/solar_collector.obj"); } catch (Exception e) {}
+        try { shieldMesh = ObjLoader.loadFromResource(GameRenderer.class, "/model/shield.obj"); } catch (Exception e) {}
         assetsLoaded = true;
     }
 
@@ -316,6 +324,10 @@ public class GameRenderer {
             obeliskIcon.close();
             obeliskIcon = null;
         }
+        if (solarIcon != null) { solarIcon.close(); solarIcon = null; }
+        if (shieldIcon != null) { shieldIcon.close(); shieldIcon = null; }
+        if (solarMesh != null) { solarMesh.close(); solarMesh = null; }
+        if (shieldMesh != null) { shieldMesh.close(); shieldMesh = null; }
         unitFacingAngles.clear();
     }
 
@@ -849,7 +861,21 @@ public class GameRenderer {
                 glColor4f(1, 1, 1, 0.3f + b.buildProgress * 0.7f);
             }
             float s = b.size / 2;
-            renderCube(s);
+            if (b.type == Building.Type.SOLAR_COLLECTOR && solarMesh != null) {
+                glPushMatrix();
+                glTranslatef(0.0f, -s, 0.0f);
+                glScalef(s*1.5f, s*1.5f, s*1.5f);
+                solarMesh.draw();
+                glPopMatrix();
+            } else if (b.type == Building.Type.SHIELD_GENERATOR && shieldMesh != null) {
+                glPushMatrix();
+                glTranslatef(0.0f, -s, 0.0f);
+                glScalef(s*1.5f, s*1.5f, s*1.5f);
+                shieldMesh.draw();
+                glPopMatrix();
+            } else {
+                renderCube(s);
+            }
             if (selectedBuildingIds.contains(b.id)) {
                 glDisable(GL_DEPTH_TEST);
                 glColor3f(1, 1, 0);
@@ -859,6 +885,24 @@ public class GameRenderer {
                 glVertex3f(s, s + 0.1f, s);
                 glVertex3f(-s, s + 0.1f, s);
                 glEnd();
+                glEnable(GL_DEPTH_TEST);
+            }
+            if (b.type == Building.Type.SHIELD_GENERATOR && b.isComplete && b.shieldHp > 0) {
+                float radius = b.shieldRadius;
+                float baseAlpha = 0.15f + 0.25f * (b.shieldHp / b.maxShieldHp);
+                glColor4f(0.2f, 0.6f, 1.0f, baseAlpha);
+                glDisable(GL_DEPTH_TEST);
+                glLineWidth(1.5f);
+                for (int ri = 0; ri < 6; ri++) {
+                    float yHeight = radius * (float)Math.sin(ri * Math.PI / 12.0);
+                    float rDist = radius * (float)Math.cos(ri * Math.PI / 12.0);
+                    glBegin(GL_LINE_LOOP);
+                    for (int i = 0; i < 32; i++) {
+                        float angle = (float) (Math.PI * 2.0 * i / 32.0);
+                        glVertex3f((float) Math.cos(angle) * rDist, yHeight - s, (float) Math.sin(angle) * rDist);
+                    }
+                    glEnd();
+                }
                 glEnable(GL_DEPTH_TEST);
             }
             glPopMatrix();
@@ -1097,6 +1141,25 @@ public class GameRenderer {
                 glBegin(GL_LINES);
                 glVertex3f(0.0f, 0.0f, 0.0f);
                 glVertex3f(e.tx - e.x, 0.0f, e.ty - e.y);
+                glEnd();
+                glPopMatrix();
+                glPopMatrix();
+            } else if (e.type == Effect.Type.SHIELD_HIT) {
+                float radius = 1.0f + (1.0f - e.life) * 4.0f; // Expand rapidly
+                float baseY = terrainHeightAt(e.x, e.y) + 0.5f;
+                glPushMatrix();
+                glTranslatef(e.x, baseY, e.y);
+                glColor4f(0.2f, 0.8f, 1.0f, e.life * 0.85f);
+                glLineWidth(3.5f);
+                glBegin(GL_LINE_LOOP);
+                for (int i = 0; i < 24; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 24.0);
+                    glVertex3f((float) Math.cos(angle) * radius, 0.0f, (float) Math.sin(angle) * radius);
+                }
+                glEnd();
+                glColor4f(0.8f, 0.9f, 1.0f, Math.max(0, e.life - 0.5f));
+                glBegin(GL_POINTS);
+                glVertex3f(0, 0, 0);
                 glEnd();
                 glPopMatrix();
             } else {
@@ -1462,11 +1525,20 @@ public class GameRenderer {
         float met = gameState.playerMetal.getOrDefault(currentRenderPlayerId, 0f);
         float inc = gameState.playerIncome.getOrDefault(currentRenderPlayerId, 0f);
         float drn = gameState.playerDrain.getOrDefault(currentRenderPlayerId, 0f);
+        float ene = gameState.playerEnergy.getOrDefault(currentRenderPlayerId, 0f);
+        float ecap = gameState.playerEnergyCapacity.getOrDefault(currentRenderPlayerId, 0f);
+        float eInc = gameState.playerEnergyIncome.getOrDefault(currentRenderPlayerId, 0f);
+        float eDrn = gameState.playerEnergyDrain.getOrDefault(currentRenderPlayerId, 0f);
         if (met <= 0 && drn > inc)
             glColor3f(1, 0.2f, 0.2f);
         else
             glColor3f(1, 1, 1);
         drawText(String.format("METAL: %d (+%.1f / -%.1f)", (int) met, inc, drn), 20, 20, 1.5f);
+        if (ene <= 0 && eDrn > eInc)
+            glColor3f(1, 0.5f, 0.1f);
+        else
+            glColor3f(0.5f, 0.8f, 1.0f);
+        drawText(String.format("ENERGY: %d / %d (+%.1f / -%.1f)", (int) ene, (int) ecap, eInc, eDrn), 20, 45, 1.5f);
         boolean cS = false;
         synchronized (gameState) {
             for (Integer id : selectedUnitIds) {
@@ -1493,6 +1565,9 @@ public class GameRenderer {
               boolean hoverWall = isInsideRect(mouseX, mouseY, 150, hudY + 10, 120, 60);
               boolean hoverExtractor = isInsideRect(mouseX, mouseY, 280, hudY + 10, 120, 60);
               boolean hoverLaser = isInsideRect(mouseX, mouseY, 410, hudY + 10, 120, 60);
+              boolean hoverSolar = isInsideRect(mouseX, mouseY, 540, hudY + 10, 120, 60);
+              boolean hoverShield = isInsideRect(mouseX, mouseY, 670, hudY + 10, 120, 60);
+              
               renderActionCardElement(20, hudY + 10, 120, 60, "FACTORY", getBuildingCost(Building.Type.FACTORY), factoryIcon,
                       selectedBuildType == Building.Type.FACTORY, hoverFactory, null);
               renderActionCardElement(150, hudY + 10, 120, 60, "WALL", getBuildingCost(Building.Type.WALL), wallIcon,
@@ -1501,14 +1576,23 @@ public class GameRenderer {
                       extractorIcon, selectedBuildType == Building.Type.EXTRACTOR, hoverExtractor, null);
               renderActionCardElement(410, hudY + 10, 120, 60, "LASER", getBuildingCost(Building.Type.LASER_TOWER),
                       laserTowerIcon, selectedBuildType == Building.Type.LASER_TOWER, hoverLaser, null);
+              renderActionCardElement(540, hudY + 10, 120, 60, "SOLAR", getBuildingCost(Building.Type.SOLAR_COLLECTOR),
+                      solarIcon, selectedBuildType == Building.Type.SOLAR_COLLECTOR, hoverSolar, null);
+              renderActionCardElement(670, hudY + 10, 120, 60, "SHIELD", getBuildingCost(Building.Type.SHIELD_GENERATOR),
+                      shieldIcon, selectedBuildType == Building.Type.SHIELD_GENERATOR, hoverShield, null);
+              
               if (hoverFactory)
                   tooltip = describeBuildingType(Building.Type.FACTORY);
               else if (hoverWall)
                   tooltip = describeBuildingType(Building.Type.WALL);
-            else if (hoverExtractor)
-                tooltip = describeBuildingType(Building.Type.EXTRACTOR);
-            else if (hoverLaser)
-                tooltip = describeBuildingType(Building.Type.LASER_TOWER);
+              else if (hoverExtractor)
+                  tooltip = describeBuildingType(Building.Type.EXTRACTOR);
+              else if (hoverLaser)
+                  tooltip = describeBuildingType(Building.Type.LASER_TOWER);
+              else if (hoverSolar)
+                  tooltip = describeBuildingType(Building.Type.SOLAR_COLLECTOR);
+              else if (hoverShield)
+                  tooltip = describeBuildingType(Building.Type.SHIELD_GENERATOR);
           } else if (factory != null) {
               boolean hoverTank = isInsideRect(mouseX, mouseY, 20, hudY + 10, 150, 60);
               boolean hoverHound = isInsideRect(mouseX, mouseY, 180, hudY + 10, 150, 60);
@@ -1926,10 +2010,21 @@ public class GameRenderer {
             case LASER_TOWER -> {
                 lines.add("LASER TOWER");
                 lines.add("HP: 650");
-                lines.add("DMG: 18");
+                lines.add("DMG: 18 (Uses Energy)");
                 lines.add("RANGE: 28");
                 lines.add("CD: 0.8s");
                 lines.add("ROLE: Defensive weapon");
+            }
+            case SOLAR_COLLECTOR -> {
+                lines.add("SOLAR COLLECTOR");
+                lines.add("HP: 400");
+                lines.add("ROLE: Energy Generation");
+            }
+            case SHIELD_GENERATOR -> {
+                lines.add("SHIELD GENERATOR");
+                lines.add("HP: 700");
+                lines.add("SHIELD: 1500");
+                lines.add("ROLE: Regional Defense");
             }
             default -> {
                 lines.add(type.name());
@@ -1945,6 +2040,8 @@ public class GameRenderer {
             case WALL -> 60;
             case EXTRACTOR -> 300;
             case LASER_TOWER -> 400;
+            case SOLAR_COLLECTOR -> 150;
+            case SHIELD_GENERATOR -> 600;
             default -> 0;
         };
     }

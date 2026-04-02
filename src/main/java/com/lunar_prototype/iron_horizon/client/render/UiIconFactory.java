@@ -36,6 +36,8 @@ public final class UiIconFactory {
             case WALL -> new Color(160, 170, 180);
             case EXTRACTOR -> new Color(230, 180, 80);
             case LASER_TOWER -> new Color(220, 110, 255);
+            case SOLAR_COLLECTOR -> new Color(60, 200, 240);
+            case SHIELD_GENERATOR -> new Color(80, 120, 255);
             default -> new Color(120, 180, 140);
         };
         drawGlow(g, accent, 54, 72, 60, 34);
@@ -44,6 +46,8 @@ public final class UiIconFactory {
             case WALL -> drawWall(g, accent);
             case EXTRACTOR -> drawExtractor(g, accent);
             case LASER_TOWER -> drawLaserTower(g, accent);
+            case SOLAR_COLLECTOR -> drawSolar(g, accent);
+            case SHIELD_GENERATOR -> drawShield(g, accent);
             default -> drawGenericBuilding(g, accent);
         }
         g.dispose();
@@ -273,6 +277,34 @@ public final class UiIconFactory {
         Shape shape = new RoundRectangle2D.Float(30, 40, 68, 42, 10, 10);
         drawShadow(g, shape);
         fillWithStroke(g, shape, accent, darken(accent, 0.5f));
+    }
+
+    private static void drawSolar(Graphics2D g, Color accent) {
+        Shape base = new RoundRectangle2D.Float(44, 76, 40, 16, 6, 6);
+        Shape panel1 = polygon(24, 40, 60, 40, 54, 72, 18, 72);
+        Shape panel2 = polygon(68, 40, 104, 40, 110, 72, 74, 72);
+        drawShadow(g, base);
+        drawShadow(g, panel1);
+        drawShadow(g, panel2);
+        fillWithStroke(g, base, darken(accent, 0.3f), darken(accent, 0.6f));
+        fillWithStroke(g, panel1, accent, darken(accent, 0.5f));
+        fillWithStroke(g, panel2, accent, darken(accent, 0.5f));
+        g.setColor(new Color(255, 255, 255, 120));
+        g.setStroke(new BasicStroke(2f));
+        g.drawLine(36, 42, 30, 70); g.drawLine(48, 42, 42, 70);
+        g.drawLine(80, 42, 86, 70); g.drawLine(92, 42, 98, 70);
+    }
+    
+    private static void drawShield(Graphics2D g, Color accent) {
+        Shape base = new Ellipse2D.Float(34, 70, 60, 16);
+        Shape dome = new Ellipse2D.Float(24, 20, 80, 80);
+        drawShadow(g, base);
+        fillWithStroke(g, base, darken(accent, 0.2f), darken(accent, 0.6f));
+        g.setPaint(new GradientPaint(0, 20, new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 160), 0, 100, new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 30)));
+        g.fill(dome);
+        g.setColor(lighten(accent, 0.4f));
+        g.setStroke(new BasicStroke(3f));
+        g.draw(dome);
     }
 
     private static Shape polygon(int... points) {
