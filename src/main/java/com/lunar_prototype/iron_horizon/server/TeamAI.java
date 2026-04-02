@@ -173,7 +173,8 @@ public class TeamAI {
         decisionTimer += dt;
         if (decisionTimer < nextDecisionTime) return;
         decisionTimer = 0;
-        nextDecisionTime = 0.30f + (float) Math.random() * 0.25f;
+        // 人間らしい反応速度に変更 (0.3-0.55s -> 0.8-1.5s)
+        nextDecisionTime = 0.80f + (float) Math.random() * 0.70f;
 
         // ── 状態収集 ──────────────────────────────────────────────
         List<Unit>     allUnits    = new ArrayList<>(gameState.units.values());
@@ -576,10 +577,14 @@ public class TeamAI {
         int n = myObelisks.size();
         for (int i = 0; i < n; i++) {
             Unit ob = myObelisks.get(i);
-            float spreadAngle = (float) ((i - n / 2.0f) * (Math.PI / 8.0f)); // 22.5° 刻みで扇状に
+            // 完璧すぎる配置を緩和するためのジッター (±2.5°程度の揺らぎ)
+            float jitter = (float) ((Math.random() - 0.5) * (Math.PI / 36.0f));
+            float spreadAngle = (float) ((i - n / 2.0f) * (Math.PI / 8.0f)) + jitter;
+            
             Vector2f toAim = new Vector2f(finalAimPoint).sub(ob.position);
             float dist = toAim.length();
-            float optimalDist = ob.attackRange * 0.85f; // 射程の 85% に位置取り
+            // 最適距離にもジッターを加える (80-90% の範囲)
+            float optimalDist = ob.attackRange * (0.80f + (float) Math.random() * 0.10f); 
 
             if (dist < optimalDist * 0.6f) {
                 // 近すぎる → 後退

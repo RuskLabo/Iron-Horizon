@@ -251,13 +251,14 @@ public class ServerLauncher {
         simulationThread.start();
     }
 
+    public static final float ENERGY_GRID_RADIUS = 35.0f;
+
     private Map<Integer, Float> computeOverdriveMultipliers() {
         Map<Integer, Float> multipliers = new HashMap<>();
         List<Building> nodes = new ArrayList<>();
         for (Building b : gameState.buildings.values()) {
             if (b.isComplete && (b.type == Building.Type.EXTRACTOR || b.energyIncome > 0)) nodes.add(b);
         }
-        float connectionRadius = 35.0f;
         boolean[] visited = new boolean[nodes.size()];
         for (int i = 0; i < nodes.size(); i++) {
             if (!visited[i]) {
@@ -271,7 +272,7 @@ public class ServerLauncher {
                     for (int j = 0; j < nodes.size(); j++) {
                         if (!visited[j]) {
                             Building next = nodes.get(j);
-                            if (curr.ownerId == next.ownerId && curr.position.distance(next.position) <= connectionRadius) {
+                            if (curr.ownerId == next.ownerId && curr.position.distance(next.position) <= ENERGY_GRID_RADIUS) {
                                 visited[j] = true; queue.add(j);
                             }
                         }
@@ -285,7 +286,9 @@ public class ServerLauncher {
                 }
                 float bonus = 1.0f;
                 if (gridEnergy > 0 && extractorCount > 0) {
-                    bonus += ((float) Math.sqrt(gridEnergy / extractorCount)) / 4.0f;
+                    // Milder formula: 1.0 + log10(1 + energy/extractors) / 2.0
+                    // Example: 100 energy / 1 extractor = 1.0 + log10(101)/2.0 approx 1.0 + 1.0 = 2.0x (Previously sqrt(100)/4 = 3.5x)
+                    bonus += (float) (Math.log10(1.0 + gridEnergy / extractorCount) / 2.0);
                 }
                 for (Building b : grid) {
                     if (b.type == Building.Type.EXTRACTOR) multipliers.put(b.id, bonus);
@@ -549,13 +552,17 @@ public class ServerLauncher {
         Iterator<Map.Entry<Integer, Projectile>> pIter = gameState.projectiles.entrySet().iterator();
         while (pIter.hasNext()) {
             Projectile p = pIter.next().getValue(); p.update(dt);
-            if (p.life <= 0) { pIter.remove(); continue; }
+            if (p.life <= 0) { 
+                addCombatEvent(Network.CombatEvent.Type.EXPLOSION, p.position.x, p.position.y, 0, 0);
+                pIter.remove(); continue; 
+            }
             boolean hit = false;
             for (Unit u : gameState.units.values()) { 
                 if (u.teamId != p.teamId && u.position.distance(p.position) < u.radius + 1.0f) { 
                     Vector2f hitPos = new Vector2f();
                     float dmg = applyDamageWithShield(p.position.x - p.velocity.x * dt, p.position.y - p.velocity.y * dt, u.position.x, u.position.y, u.teamId, p.damage, hitPos);
                     if (dmg > 0) u.hp -= dmg; 
+                    addCombatEvent(Network.CombatEvent.Type.EXPLOSION, hitPos.x, hitPos.y, 0, 0);
                     hit = true; break; 
                 } 
             }
@@ -565,6 +572,7 @@ public class ServerLauncher {
                         Vector2f hitPos = new Vector2f();
                         float dmg = applyDamageWithShield(p.position.x - p.velocity.x * dt, p.position.y - p.velocity.y * dt, b.position.x, b.position.y, b.teamId, p.damage, hitPos);
                         if (dmg > 0) b.hp -= dmg; 
+                        addCombatEvent(Network.CombatEvent.Type.EXPLOSION, hitPos.x, hitPos.y, 0, 0);
                         hit = true; break; 
                     } 
                 } 

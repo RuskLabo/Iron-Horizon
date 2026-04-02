@@ -88,6 +88,7 @@ public class GameRenderer {
     private Mesh cubeMesh;
     private Mesh houndMesh;
     private Mesh obeliskMesh;
+    private Mesh tankMesh;
     private Mesh terrainMesh;
     private Texture grassTexture;
     private Texture factoryIcon;
@@ -104,9 +105,11 @@ public class GameRenderer {
     private Mesh shieldMesh;
     private final Map<Integer, Texture> houndTextures = new HashMap<>();
     private final Map<Integer, Texture> obeliskTextures = new HashMap<>();
+    private final Map<Integer, Texture> tankTextures = new HashMap<>();
     private final Map<Integer, Float> unitFacingAngles = new HashMap<>();
-    private static final float HOUND_MODEL_YAW_OFFSET = 90.0f;
-    private static final float OBELISK_MODEL_YAW_OFFSET = 90.0f;
+    private static final float HOUND_MODEL_YAW_OFFSET = -90.0f;
+    private static final float OBELISK_MODEL_YAW_OFFSET = -90.0f;
+    private static final float TANK_MODEL_YAW_OFFSET = -90.0f;
     private final FsrUpscaler fsrUpscaler = new FsrUpscaler();
     private FontRenderer fontRenderer;
     private boolean corePrepared = false;
@@ -241,6 +244,20 @@ public class GameRenderer {
         } catch (Exception e) {
             System.err.println("Failed to load Obelisk textures: " + e.getMessage());
         }
+        try {
+            tankMesh = ObjLoader.loadFromResource(GameRenderer.class, "/model/tank.obj");
+        } catch (Exception e) {
+            System.err.println("Failed to load Tank model: " + e.getMessage());
+            tankMesh = null;
+        }
+        try {
+            tankTextures.put(1, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture3.png", 0.20f, 0.80f,
+                    1.00f, true));
+            tankTextures.put(2, Texture.createTeamTintedTexture(GameRenderer.class, "/model/texture3.png", 1.00f, 0.22f,
+                    0.22f, true));
+        } catch (Exception e) {
+            System.err.println("Failed to load Tank textures: " + e.getMessage());
+        }
         terrainMesh = TerrainMeshFactory.createTerrain();
         grassTexture = Texture.createGrassTexture(MapSettings.TERRAIN_TEXTURE_SIZE, MapSettings.TERRAIN_TEXTURE_SIZE);
         factoryIcon = UiIconFactory.createBuildingIcon(Building.Type.FACTORY);
@@ -276,6 +293,10 @@ public class GameRenderer {
             obeliskMesh.close();
             obeliskMesh = null;
         }
+        if (tankMesh != null) {
+            tankMesh.close();
+            tankMesh = null;
+        }
         for (Texture texture : houndTextures.values()) {
             texture.close();
         }
@@ -284,6 +305,10 @@ public class GameRenderer {
             texture.close();
         }
         obeliskTextures.clear();
+        for (Texture texture : tankTextures.values()) {
+            texture.close();
+        }
+        tankTextures.clear();
         if (grassTexture != null) {
             grassTexture.close();
             grassTexture = null;
@@ -905,6 +930,22 @@ public class GameRenderer {
                 }
                 glEnable(GL_DEPTH_TEST);
             }
+            
+            // Energy Grid Range Visualization
+            if (b.teamId == myTeamId && b.isComplete && 
+               (b.energyIncome > 0 || b.type == Building.Type.EXTRACTOR)) {
+                float radius = 35.0f; // ServerLauncher.ENERGY_GRID_RADIUS
+                glColor4f(0.0f, 0.8f, 0.9f, 0.15f);
+                glDisable(GL_DEPTH_TEST);
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_LOOP);
+                for (int i = 0; i < 64; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 64.0);
+                    glVertex3f((float) Math.cos(angle) * radius, -s + 0.1f, (float) Math.sin(angle) * radius);
+                }
+                glEnd();
+                glEnable(GL_DEPTH_TEST);
+            }
             glPopMatrix();
 
             if (b.type != Building.Type.METAL_PATCH) {
@@ -956,6 +997,8 @@ public class GameRenderer {
                 renderHoundModel(u, dt);
             } else if (u.type == Unit.Type.OBELISK) {
                 renderObeliskModel(u, dt);
+            } else if (u.type == Unit.Type.TANK) {
+                renderTankModel(u, dt);
             } else {
                 float sz = (u.type == Unit.Type.CONSTRUCTOR) ? 0.3f : 0.5f;
                 renderCube(sz);
@@ -1006,6 +1049,30 @@ public class GameRenderer {
         glScalef(3.0f, 3.0f, 3.0f);
         glColor3f(1.0f, 1.0f, 1.0f);
         obeliskMesh.draw();
+        glPopMatrix();
+        if (texture != null) {
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glDisable(GL_TEXTURE_2D);
+        }
+    }
+
+    private void renderTankModel(Unit unit, float dt) {
+        if (tankMesh == null) {
+            renderCube(0.6f);
+            return;
+        }
+        Texture texture = tankTextures.get(unit.teamId);
+        if (texture != null) {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, texture.id());
+        }
+        float heading = getUnitFacingHeading(unit, TANK_MODEL_YAW_OFFSET, dt);
+        glPushMatrix();
+        glTranslatef(0.0f, -0.35f, 0.0f);
+        glRotatef(heading, 0.0f, 1.0f, 0.0f);
+        glScalef(3.2f, 3.2f, 3.2f);
+        glColor3f(1.0f, 1.0f, 1.0f);
+        tankMesh.draw();
         glPopMatrix();
         if (texture != null) {
             glBindTexture(GL_TEXTURE_2D, 0);
@@ -1160,6 +1227,51 @@ public class GameRenderer {
                 glColor4f(0.8f, 0.9f, 1.0f, Math.max(0, e.life - 0.5f));
                 glBegin(GL_POINTS);
                 glVertex3f(0, 0, 0);
+                glEnd();
+                glPopMatrix();
+            } else if (e.type == Effect.Type.EXPLOSION) {
+                float s = (1.0f - e.life) * 4.0f; // Rapid expansion
+                float groundY = terrainHeightAt(e.x, e.y) + 0.5f;
+                glPushMatrix();
+                glTranslatef(e.x, groundY, e.y);
+                
+                // Outer ring
+                glColor4f(1.0f, 0.6f, 0.2f, e.life * 0.7f);
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_LOOP);
+                for (int i = 0; i < 32; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 32.0);
+                    glVertex3f((float) Math.cos(angle) * s, 0, (float) Math.sin(angle) * s);
+                }
+                glEnd();
+
+                // Bright core (Billboard style approximation)
+                glColor4f(1.0f, 0.9f, 0.4f, e.life);
+                float coreSize = s * 0.4f;
+                glBegin(GL_QUADS);
+                glVertex3f(-coreSize, coreSize, 0);
+                glVertex3f(coreSize, coreSize, 0);
+                glVertex3f(coreSize, -coreSize, 0);
+                glVertex3f(-coreSize, -coreSize, 0);
+                glEnd();
+                glBegin(GL_QUADS);
+                glVertex3f(0, coreSize, -coreSize);
+                glVertex3f(0, coreSize, coreSize);
+                glVertex3f(0, -coreSize, coreSize);
+                glVertex3f(0, -coreSize, -coreSize);
+                glEnd();
+
+                // Spark lines
+                glColor4f(1.0f, 0.45f, 0.1f, e.life * 0.9f);
+                glLineWidth(1.5f);
+                glBegin(GL_LINES);
+                for (int i = 0; i < 8; i++) {
+                    float angle = (float) (Math.PI * 2.0 * i / 8.0);
+                    float inner = s * 0.2f;
+                    float outer = s * 1.2f;
+                    glVertex3f((float) Math.cos(angle) * inner, s * 0.3f, (float) Math.sin(angle) * inner);
+                    glVertex3f((float) Math.cos(angle) * outer, s * 0.5f, (float) Math.sin(angle) * outer);
+                }
                 glEnd();
                 glPopMatrix();
             } else {
