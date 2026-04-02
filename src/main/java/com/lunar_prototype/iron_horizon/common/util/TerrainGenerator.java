@@ -1,4 +1,4 @@
-package com.lunar_prototype.iron_horizon.client.render;
+package com.lunar_prototype.iron_horizon.common.util;
 
 import com.lunar_prototype.iron_horizon.common.MapSettings;
 

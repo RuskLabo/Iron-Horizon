@@ -31,6 +31,9 @@ public class Unit {
     public boolean manualMoveOrder = false;
 
     public List<Network.Task> tasks = new ArrayList<>();
+    public List<Vector2f> currentPath = new ArrayList<>();
+    public int currentPathIndex = 0;
+    public boolean isAtDestination = false;
 
     public Unit() {}
 
@@ -73,32 +76,64 @@ public class Unit {
 
     public void update(float deltaTime, GameState state) {
         boolean facingOverride = false;
-        Vector2f targetPos = null;
+        Vector2f effectiveTargetPos = null;
 
         if (targetUnitId != null && state != null) {
             Unit target = state.units.get(targetUnitId);
-            if (target != null) targetPos = target.position;
+            if (target != null) effectiveTargetPos = target.position;
         } else if (attackTargetBuildingId != null && state != null) {
             Building target = state.buildings.get(attackTargetBuildingId);
-            if (target != null) targetPos = target.position;
+            if (target != null) effectiveTargetPos = target.position;
         } else if (targetBuildingId != null && state != null) {
             Building target = state.buildings.get(targetBuildingId);
-            if (target != null) targetPos = target.position;
+            if (target != null) effectiveTargetPos = target.position;
         }
 
-        if (targetPos != null) {
-            facingDeg = (float) Math.toDegrees(Math.atan2(targetPos.y - position.y, targetPos.x - position.x));
+        if (effectiveTargetPos != null) {
+            facingDeg = (float) Math.toDegrees(Math.atan2(effectiveTargetPos.y - position.y, effectiveTargetPos.x - position.x));
             facingOverride = true;
         }
 
-        if (position.distance(targetPosition) > 0.5f) {
-            velocity.set(targetPosition).sub(position).normalize().mul(speed);
+        // パスによる移動
+        Vector2f moveGoal = targetPosition;
+        if (!currentPath.isEmpty() && currentPathIndex < currentPath.size()) {
+            moveGoal = currentPath.get(currentPathIndex);
+            if (position.distance(moveGoal) < 0.8f) {
+                currentPathIndex++;
+                if (currentPathIndex < currentPath.size()) {
+                    moveGoal = currentPath.get(currentPathIndex);
+                }
+            }
+        }
+
+        if (position.distance(moveGoal) > 0.5f) {
+            velocity.set(moveGoal).sub(position).normalize().mul(speed);
             if (!facingOverride) {
                 facingDeg = (float) Math.toDegrees(Math.atan2(velocity.y, velocity.x));
             }
         } else {
             velocity.set(0, 0);
-            manualMoveOrder = false;
+        }
+
+        // 到着判定とフラグの更新
+        float arrivalDist = 0.5f;
+        if (targetBuildingId != null && state != null) {
+            Building b = state.buildings.get(targetBuildingId);
+            if (b != null) {
+                arrivalDist = b.size / 2.0f + radius + 1.0f;
+            }
+        }
+
+        if (position.distance(targetPosition) <= arrivalDist) {
+            if (!isAtDestination) {
+                isAtDestination = true;
+                currentPath.clear();
+                currentPathIndex = 0;
+                velocity.set(0, 0);
+                if (targetBuildingId == null) {
+                    manualMoveOrder = false;
+                }
+            }
         }
     }
 

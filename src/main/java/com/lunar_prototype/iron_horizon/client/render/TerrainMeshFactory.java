@@ -1,6 +1,7 @@
 package com.lunar_prototype.iron_horizon.client.render;
 
 import com.lunar_prototype.iron_horizon.common.MapSettings;
+import com.lunar_prototype.iron_horizon.common.util.TerrainGenerator;
 
 public final class TerrainMeshFactory {
     private TerrainMeshFactory() {}

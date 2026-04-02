@@ -10,6 +10,7 @@ import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Projectile;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
 import com.lunar_prototype.iron_horizon.common.util.SpatialGrid;
+import com.lunar_prototype.iron_horizon.common.util.Pathfinder;
 import com.lunar_prototype.iron_horizon.server.TeamAI;
 import org.joml.Vector2f;
 
@@ -96,14 +97,10 @@ public class ServerLauncher {
                               synchronized (constructor.tasks) {
                                   if (!cmd.shiftHold) {
                                       constructor.tasks.clear();
-                                      constructor.targetBuildingId = b.id;
-                                      constructor.targetPosition.set(b.position);
-                                      constructor.manualMoveOrder = true;
-                                  } else {
-                                      constructor.tasks.add(task);
-                                      if (constructor.targetBuildingId == null && constructor.targetUnitId == null && constructor.attackTargetBuildingId == null) {
-                                          startNextQueuedTask(constructor);
-                                      }
+                                  }
+                                  constructor.tasks.add(task);
+                                  if (constructor.targetBuildingId == null && constructor.targetUnitId == null && constructor.attackTargetBuildingId == null) {
+                                      startNextQueuedTask(constructor);
                                   }
                               }
                           }
@@ -118,41 +115,48 @@ public class ServerLauncher {
                         for (Integer id : cmd.unitIds) {
                             Unit unit = gameState.units.get(id);
                               if (unit != null && unit.teamId == teamId) {
-                                  if (!cmd.queue) {
-                                      synchronized (unit.tasks) {
+                                  synchronized (unit.tasks) {
+                                      if (!cmd.queue) {
                                           unit.tasks.clear();
+                                          unit.targetUnitId = null;
+                                          unit.attackTargetBuildingId = null;
+                                          unit.targetBuildingId = null;
                                       }
-                                      unit.targetUnitId = null;
-                                      unit.attackTargetBuildingId = null;
-                                      unit.targetBuildingId = null;
-                                  }
-                                  if (cmd.waypoints != null && !cmd.waypoints.isEmpty()) {
-                                      Vector2f first = cmd.waypoints.get(0);
-                                      unit.targetPosition.set(first.x, first.y);
-                                      unit.manualMoveOrder = true;
-                                      synchronized (unit.tasks) {
-                                          for (int i = 1; i < cmd.waypoints.size(); i++) {
-                                              Vector2f wp = cmd.waypoints.get(i);
+                                      if (cmd.waypoints != null && !cmd.waypoints.isEmpty()) {
+                                          for (Vector2f wp : cmd.waypoints) {
                                               Network.Task task = new Network.Task();
                                               task.type = Network.Task.Type.MOVE;
-                                              task.x = wp.x;
-                                              task.y = wp.y;
+                                              task.x = wp.x; task.y = wp.y;
                                               unit.tasks.add(task);
                                           }
+                                      } else {
+                                          Network.Task task = new Network.Task();
+                                          task.type = Network.Task.Type.MOVE;
+                                          task.x = cmd.targetX; task.y = cmd.targetY;
+                                          unit.tasks.add(task);
                                       }
-                                  } else {
-                                      unit.targetPosition.set(cmd.targetX, cmd.targetY);
-                                      unit.manualMoveOrder = true;
-                                }
-                            }
+                                      if (unit.targetBuildingId == null && unit.targetUnitId == null && unit.attackTargetBuildingId == null) {
+                                          startNextQueuedTask(unit);
+                                      }
+                                  }
+                              }
                         }
                     } else if (object instanceof Network.AttackCommand) {
                         Network.AttackCommand cmd = (Network.AttackCommand) object;
                           for (Integer id : cmd.unitIds) {
                               Unit unit = gameState.units.get(id);
                               if (unit != null && unit.teamId == teamId) {
-                                  unit.targetUnitId = cmd.targetUnitId; unit.attackTargetBuildingId = cmd.targetBuildingId;
+                                  unit.targetUnitId = cmd.targetUnitId;
+                                  unit.attackTargetBuildingId = cmd.targetBuildingId;
                                   unit.targetBuildingId = null;
+                                  if (cmd.targetBuildingId != null) {
+                                      Building tb = gameState.buildings.get(cmd.targetBuildingId);
+                                      if (tb != null) {
+                                          unit.targetPosition.set(tb.position);
+                                          unit.currentPath = Pathfinder.findPath(unit.position, unit.targetPosition, gameState, tb.id);
+                                          unit.currentPathIndex = 0;
+                                      }
+                                  }
                                   synchronized (unit.tasks) {
                                       unit.tasks.clear();
                                   }
@@ -447,8 +451,11 @@ public class ServerLauncher {
                   }
                   if (u.targetBuildingId == null && u.targetUnitId == null && u.attackTargetBuildingId == null) {
                       synchronized (u.tasks) {
-                          if (!u.tasks.isEmpty() && u.position.distance(u.targetPosition) <= 0.5f) {
-                              startNextQueuedTask(u);
+                          if (!u.tasks.isEmpty()) {
+                              // 移動命令中であれば、目的地に到着していることを確認してから次のタスクへ
+                              if (u.isAtDestination || !u.manualMoveOrder) {
+                                  startNextQueuedTask(u);
+                              }
                           }
                       }
                   }
@@ -458,11 +465,22 @@ public class ServerLauncher {
     }
 
       private void startNextQueuedTask(Unit u) {
+          u.isAtDestination = false;
           synchronized (u.tasks) {
               if (u.tasks.isEmpty()) return;
               Network.Task next = u.tasks.remove(0);
-              if (next.type == Network.Task.Type.MOVE) { u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
-              else if (next.type == Network.Task.Type.BUILD) { u.targetBuildingId = next.targetBuildingId; u.targetPosition.set(next.x, next.y); u.manualMoveOrder = true; }
+              if (next.type == Network.Task.Type.MOVE) {
+                  u.targetPosition.set(next.x, next.y);
+                  u.currentPath = Pathfinder.findPath(u.position, u.targetPosition, gameState);
+                  u.currentPathIndex = 0;
+                  u.manualMoveOrder = true;
+              } else if (next.type == Network.Task.Type.BUILD) {
+                  u.targetBuildingId = next.targetBuildingId;
+                  u.targetPosition.set(next.x, next.y);
+                  u.currentPath = Pathfinder.findPath(u.position, u.targetPosition, gameState, next.targetBuildingId);
+                  u.currentPathIndex = 0;
+                  u.manualMoveOrder = true;
+              }
           }
       }
 

@@ -2,6 +2,7 @@ package com.lunar_prototype.iron_horizon.client;
 
 import com.lunar_prototype.iron_horizon.common.Network;
 import com.lunar_prototype.iron_horizon.common.MapSettings;
+import com.lunar_prototype.iron_horizon.common.util.TerrainGenerator;
 import com.lunar_prototype.iron_horizon.common.model.Building;
 import com.lunar_prototype.iron_horizon.common.model.GameState;
 import com.lunar_prototype.iron_horizon.common.model.Unit;
@@ -10,7 +11,6 @@ import com.lunar_prototype.iron_horizon.client.render.MeshFactory;
 import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
 import com.lunar_prototype.iron_horizon.client.render.FsrUpscaler;
 import com.lunar_prototype.iron_horizon.client.render.ObjLoader;
-import com.lunar_prototype.iron_horizon.client.render.TerrainGenerator;
 import com.lunar_prototype.iron_horizon.client.render.TerrainMeshFactory;
 import com.lunar_prototype.iron_horizon.client.render.UiIconFactory;
 import com.lunar_prototype.iron_horizon.client.render.Texture;
@@ -831,8 +831,9 @@ public class GameRenderer {
 
     private void renderBuildings(int myTeamId) {
         for (Building b : gameState.buildings.values()) {
+            float groundY = terrainHeightAt(b.position.x, b.position.y);
             glPushMatrix();
-            glTranslatef(b.position.x, terrainHeightAt(b.position.x, b.position.y) + b.size / 2, b.position.y);
+            glTranslatef(b.position.x, groundY + b.size / 2, b.position.y);
             if (b.type == Building.Type.METAL_PATCH) {
                 glColor3f(1.0f, 0.5f, 0.0f);
             } else if (b.isComplete) {
@@ -864,13 +865,13 @@ public class GameRenderer {
 
             if (b.type != Building.Type.METAL_PATCH) {
                 if (!b.isComplete) {
-                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.buildProgress, 0.2f, 0.5f,
+                    renderProgressBar(b.position.x, groundY + b.size + 1.0f, b.position.y, 3.0f, b.buildProgress, 0.2f, 0.5f,
                             1.0f);
                 } else {
-                    renderProgressBar(b.position.x, b.size + 1.0f, b.position.y, 3.0f, b.hp / b.maxHp, 0.2f, 1.0f,
+                    renderProgressBar(b.position.x, groundY + b.size + 1.0f, b.position.y, 3.0f, b.hp / b.maxHp, 0.2f, 1.0f,
                             0.2f);
                     if (b.type == Building.Type.FACTORY && !b.productionQueue.isEmpty()) {
-                        renderProgressBar(b.position.x, b.size + 1.5f, b.position.y, 3.0f, b.productionTimer, 1.0f,
+                        renderProgressBar(b.position.x, groundY + b.size + 1.5f, b.position.y, 3.0f, b.productionTimer, 1.0f,
                                 0.8f, 0.0f);
                     }
                 }
@@ -890,8 +891,9 @@ public class GameRenderer {
 
     private void renderUnits(int myTeamId, float dt) {
         for (Unit u : gameState.units.values()) {
+            float terrainY = terrainHeightAt(u.position.x, u.position.y);
             glPushMatrix();
-            glTranslatef(u.position.x, terrainHeightAt(u.position.x, u.position.y) + 0.5f, u.position.y);
+            glTranslatef(u.position.x, terrainY + 0.5f, u.position.y);
             if (selectedUnitIds.contains(u.id))
                 glColor3f(1.0f, 1.0f, 0.0f);
             else if (u.teamId == myTeamId) {
@@ -905,6 +907,7 @@ public class GameRenderer {
                     glColor3f(0.0f, 0.8f, 1.0f);
             } else
                 glColor3f(1.0f, 0.2f, 0.2f);
+
             if (u.type == Unit.Type.HOUND) {
                 renderHoundModel(u, dt);
             } else if (u.type == Unit.Type.OBELISK) {
@@ -914,7 +917,7 @@ public class GameRenderer {
                 renderCube(sz);
             }
             glPopMatrix();
-            renderProgressBar(u.position.x, 1.5f, u.position.y, 1.0f, u.hp / u.maxHp, 0.2f, 1.0f, 0.2f);
+            renderProgressBar(u.position.x, terrainY + 1.5f, u.position.y, 1.0f, u.hp / u.maxHp, 0.2f, 1.0f, 0.2f);
         }
     }
 
