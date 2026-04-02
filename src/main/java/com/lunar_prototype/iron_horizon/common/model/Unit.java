@@ -58,12 +58,12 @@ public class Unit {
             attackDamage = 10.0f;
             radius = 0.55f;
         } else if (type == Type.OBELISK) {
-            maxHp = 1150;
+            maxHp = 800;
             speed = 4.5f;
             attackRange = 34.0f;
             attackDamage = 320.0f;
             attackCooldown = 0.0f;
-            radius = 0.3f;
+            radius = 0.6f;
         } else {
             maxHp = 150;
             speed = 12.0f;

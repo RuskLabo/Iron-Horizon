@@ -364,7 +364,7 @@ public class ServerLauncher {
     }
 
     private void applySplashDamage(Unit attacker, float impactX, float impactY) {
-        float splashRadius = 7.0f;
+        float splashRadius = 5.0f;
         float directRadius = 1.9f;
         float directDamage = attacker.attackDamage;
         float splashDamage = 120.0f;
@@ -504,7 +504,7 @@ public class ServerLauncher {
         return switch (type) {
             case TANK -> 200;
             case HOUND -> 120;
-            case OBELISK -> 400;
+            case OBELISK -> 600;
             default -> 150;
         };
     }
@@ -513,7 +513,7 @@ public class ServerLauncher {
         return switch (type) {
             case TANK -> 5.0f;
             case HOUND -> 3.5f;
-            case OBELISK -> 12.0f;
+            case OBELISK -> 16.0f;
             default -> 4.0f;
         };
     }
