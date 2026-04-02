@@ -1827,6 +1827,12 @@ public class GameRenderer {
         float cx = windowWidth / 2.0f;
         float cy = windowHeight / 2.0f;
 
+        double[] cursorX = new double[1];
+        double[] cursorY = new double[1];
+        glfwGetCursorPos(window, cursorX, cursorY);
+        float mouseX = (float) cursorX[0];
+        float mouseY = (float) cursorY[0];
+
         UiBox root = new UiBox();
         root.setUiScale(currentUiScale);
         root.width = 320 * currentUiScale;
