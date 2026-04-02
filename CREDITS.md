@@ -12,6 +12,10 @@ This project uses resources created by the community. We are grateful for their 
 - The 3D models used in this game are licensed under **Creative Commons Attribution-NonCommercial (CC BY-NC)**.
   - They are designated for **non-commercial use only**.
 
+## Fonts
+- **M+ FONTS**
+  - **License**: [SIL Open Font License](https://openfontlicense.org/)
+
 ## Shaders & Graphics
 - **AMD FidelityFX™ Super Resolution (FSR) 1.0**
   - **Author**: Advanced Micro Devices, Inc.
