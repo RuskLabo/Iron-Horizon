@@ -592,7 +592,7 @@ public class ServerLauncher {
                 continue;
             }
             if (u.attackCooldown > 0) u.attackCooldown -= dt;
-            if ((u.type == Unit.Type.TANK || u.type == Unit.Type.OBELISK) && u.targetUnitId == null && u.attackTargetBuildingId == null) {
+            if (u.canAttackGround && u.targetUnitId == null && u.attackTargetBuildingId == null) {
                 for (Unit enemy : gameState.units.values()) { if (enemy.teamId != u.teamId && enemy.position.distance(u.position) < u.attackRange) { u.targetUnitId = enemy.id; break; } }
             }
             if (u.targetUnitId != null) {
@@ -603,7 +603,7 @@ public class ServerLauncher {
                     if (dist > u.attackRange) { if (u.manualMoveOrder) u.targetUnitId = null; else u.targetPosition.set(t.position); }
                     else {
                         if (!u.manualMoveOrder) u.targetPosition.set(u.position);
-                        if (u.attackCooldown <= 0) {
+                        if (u.attackCooldown <= 0 && u.turretReady) {
                             if (u.type == Unit.Type.OBELISK) {
                                 applySplashDamage(u, t.position.x, t.position.y);
                                 addCombatEvent(Network.CombatEvent.Type.OBELISK_BLAST, u.position.x, u.position.y, t.position.x, t.position.y);
@@ -620,7 +620,7 @@ public class ServerLauncher {
                     if (dist > u.attackRange + t.size) u.targetPosition.set(t.position);
                     else {
                         u.targetPosition.set(u.position);
-                        if (u.attackCooldown <= 0) {
+                        if (u.attackCooldown <= 0 && u.turretReady) {
                             if (u.type == Unit.Type.OBELISK) {
                                 applySplashDamage(u, t.position.x, t.position.y);
                                 addCombatEvent(Network.CombatEvent.Type.OBELISK_BLAST, u.position.x, u.position.y, t.position.x, t.position.y);
@@ -747,6 +747,8 @@ public class ServerLauncher {
                       Network.UnitData data = new Network.UnitData();
                       data.id = unit.id; data.type = unit.type; data.teamId = unit.teamId; data.ownerId = unit.ownerId;
                       data.x = unit.position.x; data.y = unit.position.y; data.hp = unit.hp; data.maxHp = unit.maxHp; data.facingDeg = unit.facingDeg;
+                      data.turretFacingDeg = unit.turretFacingDeg; data.turretReady = unit.turretReady;
+                      data.canAttackGround = unit.canAttackGround; data.canAttackAir = unit.canAttackAir; data.turnSpeed = unit.turnSpeed;
                       synchronized (unit.tasks) {
                           data.tasks.addAll(unit.tasks);
                       }
@@ -791,6 +793,13 @@ public class ServerLauncher {
                 }
                 sync.lastBuildings.clear();
                 sync.lastBuildings.putAll(currentBuildings);
+
+                for (Projectile p : gameState.projectiles.values()) {
+                    Network.ProjectileData pd = new Network.ProjectileData();
+                    pd.id = p.id; pd.x = p.position.x; pd.y = p.position.y;
+                    pd.vx = p.velocity.x; pd.vy = p.velocity.y; pd.teamId = p.teamId;
+                    update.projectiles.add(pd);
+                }
 
                 conn.sendUDP(update);
             }

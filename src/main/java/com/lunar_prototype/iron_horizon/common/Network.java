@@ -104,7 +104,12 @@ public class Network {
         public float x, y;
         public float hp, maxHp;
         public float facingDeg;
+        public float turretFacingDeg;
+        public boolean turretReady;
         public boolean selected;
+        public boolean canAttackGround;
+        public boolean canAttackAir;
+        public float turnSpeed;
         public List<Task> tasks = new ArrayList<>();
     }
     

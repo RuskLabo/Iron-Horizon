@@ -5,6 +5,7 @@ import com.esotericsoftware.kryonet.Connection;
 import com.esotericsoftware.kryonet.Listener;
 import com.lunar_prototype.iron_horizon.client.GameRenderer;
 import com.lunar_prototype.iron_horizon.client.SoundManager;
+import com.lunar_prototype.iron_horizon.client.ui.UiButton;
 import com.lunar_prototype.iron_horizon.client.render.FsrPreset;
 import com.lunar_prototype.iron_horizon.client.util.DisplayMode;
 import com.lunar_prototype.iron_horizon.common.Network;
@@ -637,48 +638,28 @@ public class ClientLauncher {
     }
 
     private void checkMenuClick(double x, double y) {
-        int[] w = new int[1], h = new int[1];
-        glfwGetWindowSize(window, w, h);
-        float cx = w[0] / 2.0f;
-        float cy = h[0] / 2.0f;
+        if (renderer.getPauseMenuBox() == null) return;
         
-        // Use the same scale and positioning as in GameRenderer.renderMenu
-        float scale = renderer.getCurrentUiScale();
-        float menuWidth = 320 * scale;
-        float contentWidth = 240 * scale;
-        float menuX = cx - menuWidth / 2.0f;
-        float contentX = cx - contentWidth / 2.0f;
-        float startY = cy - 200 * scale;
+        float mx = (float) x;
+        float my = (float) y;
         
-        // The stack and padding shifts things down
-        // Padding (20) + Title (height ~32 + margin 10) + VolLabel (height ~20) + Spacing (15 * 2)
-        // This is an approximation, but better than before.
-        float currentY = startY + (20 + 32 + 10 + 20 + 15 * 2) * scale;
-        
-        // Volume bar
-        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 24 * scale) {
-            float vol = (float) ((x - contentX) / contentWidth);
-            soundManager.setMasterVolume(vol);
-        }
-        
-        currentY += (24 + 15) * scale; // Volume bar + spacing
-        
-        // Settings Button
-        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
+        UiButton settingsBtn = renderer.getPauseMenuSettingsButton();
+        if (settingsBtn != null && mx >= settingsBtn.x && mx <= settingsBtn.x + settingsBtn.width 
+            && my >= settingsBtn.y && my <= settingsBtn.y + settingsBtn.height) {
             openSettings(SettingsContext.PAUSE_MENU);
+            return;
         }
         
-        currentY += (50 + 15) * scale; // Settings + spacing
-        
-        // Resume Button
-        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
+        UiButton resumeBtn = renderer.getPauseMenuResumeButton();
+        if (resumeBtn != null && mx >= resumeBtn.x && mx <= resumeBtn.x + resumeBtn.width 
+            && my >= resumeBtn.y && my <= resumeBtn.y + resumeBtn.height) {
             isMenuOpen = false;
+            return;
         }
         
-        currentY += (50 + 15) * scale; // Resume + spacing
-        
-        // Quit Button
-        if (x > contentX && x < contentX + contentWidth && y > currentY && y < currentY + 50 * scale) {
+        UiButton quitBtn = renderer.getPauseMenuQuitButton();
+        if (quitBtn != null && mx >= quitBtn.x && mx <= quitBtn.x + quitBtn.width 
+            && my >= quitBtn.y && my <= quitBtn.y + quitBtn.height) {
             glfwSetWindowShouldClose(window, true);
         }
     }

@@ -848,7 +848,7 @@ public class GameRenderer {
         glViewport(0, 0, framebufferWidth, framebufferHeight);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        glOrtho(0, windowWidth, windowHeight, 0, -1, 1);
+        glOrtho(0, framebufferWidth, framebufferHeight, 0, -1, 1);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
         glDisable(GL_DEPTH_TEST);
@@ -1059,6 +1059,7 @@ public class GameRenderer {
     private void renderTankModel(Unit unit, float dt) {
         if (tankMesh == null) {
             renderCube(0.6f);
+            renderTankBarrel(unit);
             return;
         }
         Texture texture = tankTextures.get(unit.teamId);
@@ -1078,6 +1079,27 @@ public class GameRenderer {
             glBindTexture(GL_TEXTURE_2D, 0);
             glDisable(GL_TEXTURE_2D);
         }
+        renderTankBarrel(unit);
+    }
+
+    private void renderTankBarrel(Unit unit) {
+        float bodyFacing = -unit.facingDeg;
+        float turretFacing = -unit.turretFacingDeg;
+        float offsetX = (float) Math.cos(Math.toRadians(bodyFacing)) * 0.8f;
+        float offsetZ = (float) Math.sin(Math.toRadians(bodyFacing)) * 0.8f;
+        float barrelLen = 1.5f;
+        float barrelEndX = offsetX + (float) Math.cos(Math.toRadians(turretFacing)) * barrelLen;
+        float barrelEndZ = offsetZ + (float) Math.sin(Math.toRadians(turretFacing)) * barrelLen;
+        if (!unit.turretReady) {
+            glColor3f(1.0f, 0.5f, 0.0f);
+        } else {
+            glColor3f(0.3f, 0.3f, 0.3f);
+        }
+        glLineWidth(3.0f);
+        glBegin(GL_LINES);
+        glVertex3f(offsetX, 0.5f, offsetZ);
+        glVertex3f(barrelEndX, 0.5f, barrelEndZ);
+        glEnd();
     }
 
     private void renderProjectiles(int myTeamId) {
@@ -1936,9 +1958,23 @@ public class GameRenderer {
         glDisable(GL_TEXTURE_2D);
     }
 
+    private UiBox pauseMenuBox;
+    private UiLabel pauseMenuTitle;
+    private UiButton resumeButton;
+    private UiButton settingsButton;
+    private UiButton quitButton;
+
+    public UiButton getPauseMenuSettingsButton() { return settingsButton; }
+    public UiButton getPauseMenuResumeButton() { return resumeButton; }
+    public UiButton getPauseMenuQuitButton() { return quitButton; }
+    public UiBox getPauseMenuBox() { return pauseMenuBox; }
+
     private void renderMenu() {
-        float cx = windowWidth / 2.0f;
-        float cy = windowHeight / 2.0f;
+        setup2D();
+
+        if (pauseMenuBox == null) {
+            initPauseMenu();
+        }
 
         double[] cursorX = new double[1];
         double[] cursorY = new double[1];
@@ -1946,74 +1982,78 @@ public class GameRenderer {
         float mouseX = (float) cursorX[0];
         float mouseY = (float) cursorY[0];
 
-        UiBox root = new UiBox();
-        root.setUiScale(currentUiScale);
-        root.width = 320 * currentUiScale;
-        root.heightMode = UiElement.LayoutMode.AUTO;
-        root.widthMode = UiElement.LayoutMode.FIXED;
-        root.x = cx - root.width / 2.0f;
-        root.y = cy - 200 * currentUiScale;
-        root.setPadding(20);
-        root.bgR = 0.03f; root.bgG = 0.06f; root.bgB = 0.04f; root.bgA = 0.92f;
-        root.borderR = 0.2f; root.borderG = 0.8f; root.borderB = 0.35f; root.borderA = 0.35f;
+        float scale = currentUiScale;
 
-        UiStack stack = new UiStack(UiStack.Orientation.VERTICAL);
-        stack.spacing = 15;
-        stack.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+        int[] w = new int[1], h = new int[1];
+        glfwGetWindowSize(window, w, h);
+        float cx = w[0] / 2.0f;
+        float cy = h[0] / 2.0f;
 
-        UiLabel title = new UiLabel("PAUSE MENU", fontRenderer);
-        title.scale = 2.0f;
-        title.setColor(0.2f, 0.8f, 0.35f, 1.0f);
-        title.horizontalAlign = UiElement.HorizontalAlign.CENTER;
-        title.setMargin(10);
-        stack.addChild(title);
+        pauseMenuBox.setUiScale(scale);
+        pauseMenuBox.x = cx - pauseMenuBox.getPreferredWidth() / 2.0f;
+        pauseMenuBox.y = cy - pauseMenuBox.getPreferredHeight() / 2.0f;
+        pauseMenuBox.updateLayout();
 
-        UiLabel volLabel = new UiLabel("VOLUME:", fontRenderer);
-        volLabel.scale = 1.2f;
-        volLabel.horizontalAlign = UiElement.HorizontalAlign.LEFT;
-        stack.addChild(volLabel);
+        settingsButton.hovered = settingsButton.isMouseOver(mouseX, mouseY);
+        resumeButton.hovered = resumeButton.isMouseOver(mouseX, mouseY);
+        quitButton.hovered = quitButton.isMouseOver(mouseX, mouseY);
 
-        // Volume bar container
-        UiBox volBox = new UiBox();
-        volBox.width = 240 * currentUiScale;
-        volBox.height = 24 * currentUiScale;
-        volBox.widthMode = UiElement.LayoutMode.FIXED;
-        volBox.heightMode = UiElement.LayoutMode.FIXED;
-        volBox.bgR = 0.15f; volBox.bgG = 0.15f; volBox.bgB = 0.15f;
-        volBox.horizontalAlign = UiElement.HorizontalAlign.CENTER;
-        
-        float vol = soundManager.getMasterVolume();
-        UiBox volFill = new UiBox();
-        volFill.width = (240 * currentUiScale) * vol;
-        volFill.height = 24 * currentUiScale;
-        volFill.widthMode = UiElement.LayoutMode.FIXED;
-        volFill.heightMode = UiElement.LayoutMode.FIXED;
-        volFill.bgR = 0.34f; volFill.bgG = 0.85f; volFill.bgB = 0.45f;
-        volFill.drawBorder = false;
-        volBox.addChild(volFill);
-        stack.addChild(volBox);
+        pauseMenuBox.render();
+    }
 
-        UiButton settingsBtn = new UiButton(fontRenderer, "SETTINGS");
-        settingsBtn.width = 240 * currentUiScale;
-        settingsBtn.height = 50 * currentUiScale;
-        settingsBtn.hovered = settingsBtn.isMouseOver(mouseX, mouseY);
-        stack.addChild(settingsBtn);
+    private void initPauseMenu() {
+        pauseMenuBox = new UiBox();
+        pauseMenuBox.bgR = 0.02f;
+        pauseMenuBox.bgG = 0.04f;
+        pauseMenuBox.bgB = 0.02f;
+        pauseMenuBox.bgA = 0.95f;
+        pauseMenuBox.borderR = 0.2f;
+        pauseMenuBox.borderG = 0.8f;
+        pauseMenuBox.borderB = 0.35f;
+        pauseMenuBox.borderA = 0.9f;
+        pauseMenuBox.paddingTop = 20.0f;
+        pauseMenuBox.paddingBottom = 20.0f;
+        pauseMenuBox.paddingLeft = 40.0f;
+        pauseMenuBox.paddingRight = 40.0f;
 
-        UiButton resumeBtn = new UiButton(fontRenderer, "RESUME");
-        resumeBtn.width = 240 * currentUiScale;
-        resumeBtn.height = 50 * currentUiScale;
-        resumeBtn.hovered = resumeBtn.isMouseOver(mouseX, mouseY);
-        stack.addChild(resumeBtn);
+        pauseMenuTitle = new UiLabel("PAUSE MENU", fontRenderer);
+        pauseMenuTitle.scale = 1.3f;
+        pauseMenuTitle.r = 0.34f;
+        pauseMenuTitle.g = 0.85f;
+        pauseMenuTitle.b = 0.45f;
+        pauseMenuTitle.marginTop = 10.0f;
+        pauseMenuTitle.marginBottom = 30.0f;
+        pauseMenuTitle.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+        pauseMenuBox.addChild(pauseMenuTitle);
 
-        UiButton quitBtn = new UiButton(fontRenderer, "QUIT");
-        quitBtn.width = 240 * currentUiScale;
-        quitBtn.height = 50 * currentUiScale;
-        quitBtn.hovered = quitBtn.isMouseOver(mouseX, mouseY);
-        stack.addChild(quitBtn);
+        settingsButton = new UiButton(fontRenderer, "Settings");
+        settingsButton.marginTop = 15.0f;
+        settingsButton.width = 240.0f;
+        settingsButton.height = 50.0f;
+        settingsButton.widthMode = UiElement.LayoutMode.FIXED;
+        settingsButton.heightMode = UiElement.LayoutMode.FIXED;
 
-        root.addChild(stack);
-        root.updateLayout();
-        root.render();
+        resumeButton = new UiButton(fontRenderer, "Resume");
+        resumeButton.marginTop = 15.0f;
+        resumeButton.width = 240.0f;
+        resumeButton.height = 50.0f;
+        resumeButton.widthMode = UiElement.LayoutMode.FIXED;
+        resumeButton.heightMode = UiElement.LayoutMode.FIXED;
+
+        quitButton = new UiButton(fontRenderer, "Quit");
+        quitButton.marginTop = 15.0f;
+        quitButton.width = 240.0f;
+        quitButton.height = 50.0f;
+        quitButton.widthMode = UiElement.LayoutMode.FIXED;
+        quitButton.heightMode = UiElement.LayoutMode.FIXED;
+
+        UiStack buttonStack = new UiStack(UiStack.Orientation.VERTICAL);
+        buttonStack.spacing = 15.0f * currentUiScale;
+        buttonStack.horizontalAlign = UiElement.HorizontalAlign.CENTER;
+        buttonStack.addChild(settingsButton);
+        buttonStack.addChild(resumeButton);
+        buttonStack.addChild(quitButton);
+        pauseMenuBox.addChild(buttonStack);
     }
 
     private float terrainHeightAt(float x, float z) {
